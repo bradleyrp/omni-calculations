@@ -65,7 +65,7 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 	mod = get_automacs()
 	mod['state'].force_field = 'charmm'
 	Landscape = mod['Landscape']
-	land = Landscape(cwd='amx/')
+	land = Landscape()
 	# use the landscape to get hydrogen bond donors and acceptors for lipids
 	hydrogen_bond_ref = {}
 	# this section relies on correct definitions from the Landscape
@@ -75,6 +75,7 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 	# loop over lipid targets and scan them for hydrogen bond opportunities
 	for resname in targets:
 		# each lipid ITP has an identical molecule with the same (residue) name
+		# ryan import gmxtopology please!
 		itp = mod['GMXTopology'](land.objects[resname]['fn'])
 		# donor names come from a double-regex match over bonds
 		donor_names = itp.get_bonds_by_regex(molname=resname,patterns=['^H','^(N|O|S)'])
@@ -92,6 +93,8 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 		if os.path.isfile(itp_fn): itp_fn_abs = itp_fn
 		# if path is relative then we consult the spots
 		else:
+			raise Exceptions('we need the full ITP for %s'%sn)
+			#!!! this is deprecated in the omnicalc ortho_refactor
 			#! previously work.config['spots'][work.namer.get_spotname(sn)]
 			rootdir = os.path.join(*[work.config['spots'][work.namer.get_spotname(sn)][k] 
 				for k in ['route_to_data','spot_directory']])
@@ -106,7 +109,7 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 			donor_resnames_names = protein_itp.get_bonds_by_regex(molname=molname,
 				patterns=['^H','^(N|O|S)'],include_resname=True)
 			# organize hydrogen bonds by residue name
-			resnames_all = list(set([i for j in zip(*donor_resnames_names)[0] for i in j]))
+			resnames_all = list(set([i for j in list(zip(*donor_resnames_names))[0] for i in j]))
 			for resname_focus in resnames_all:
 				donor_list = []
 				# loop over resnames within the protein

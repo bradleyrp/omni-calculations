@@ -210,7 +210,7 @@ def identify_lipid_leaflets_legacy(pts,vec,monolayer_cutoff,
 		with time_limit(topologize_time_limit): 
 			wrapper = topologize(pts,vec,
 				**({'tol':topologize_tolerance} if topologize_tolerance else {}))
-	except TimeoutException, msg: 
+	except (TimeoutException,msg): 
 		status('topologize failed to join the bilayer. '
 			'if it is broken over PBCs e.g. a saddle, this is a serious error which may go undetected. '
 			'make sure you always inspect the topology later.',tag='error')
@@ -443,7 +443,7 @@ class LeafletFinder:
 			#! fix this issue? make some kind of retry method
 			try: connectivity = sklearn.neighbors.kneighbors_graph(findframe,
 				n_neighbors=self.cluster_neighbors,include_self=False)
-			except Exception as (e):
+			except Exception as e:
 				print(e)
 				raise Exception('identify leaflets failed. see exception above. '
 					'this is a known issue. try again, since some of the selections are random.')

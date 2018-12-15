@@ -96,10 +96,12 @@ def fetch_coordinates_subject_target(**kwargs):
 	selections = {'subject':subject,'target':obj}
 	# special selections here
 	for key,this in selections.items():
-		if isinstance(this,dict) and this.keys()==['predefined']:
+		if isinstance(this,dict) and set(this.keys())=={'predefined'}:
 			selections[key] = PredefinedSelectionMDA(
 				this['predefined'],work=kwargs_compute['workspace']).result
 	mc = MultiCoordinates(
 		structure=structure,trajectory=trajectory,
 		**selections)
-	return mc.load()
+	try: return mc.load()
+	except:
+		import ipdb;ipdb.set_trace()

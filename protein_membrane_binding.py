@@ -118,6 +118,7 @@ def load():
 	"""Runs once to provide data."""
 	work = WorkSpace(analysis=True)
 	# we load the full data set and then use data.set to subselect
+	# note that we choose the collection of simulations here, i.e. "cursor"
 	data = work.plotload(plotname='contacts')
 	sns = sns_ordered = work.sns()
 	# custom parameters
@@ -205,7 +206,7 @@ def plot_protein_lipid_timeseries(sns,kind,cutoff,**kwargs):
 	namer = kwargs.get('namer',namer_default)
 	#! zoom_figure(fig,3.0)
 	picturesave(namer(kind=kwargs.get('kind_label',kind)),work.plotdir,
-		backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+		backup=False,version=True,meta={'sns':sns_this},extras=[],dpi=300,form='png')
 
 def plot_protein_lipid_histograms(sns,kind,cutoff,**kwargs):
 	"""
@@ -232,8 +233,8 @@ def plot_protein_lipid_histograms(sns,kind,cutoff,**kwargs):
 		set([j for k in [i.keys() for i in counts.values()] for j in k])]
 	# DIMENSION 2: valid PROTEIN RESIDUES by column with an extra filter
 	residues_remap = {'nwaspbilayernochl0':slice(0,22)}
-	resid_resname = dict([(sn,odict(zip(data.this[sn]['subject_residues_resids'],
-		data.this[sn]['subject_residues_resnames']))) for sn in sns_this])
+	resid_resname = dict([(sn,odict(zip(data.this[sn]['subject_residues_resids'].astype(int),
+		data.this[sn]['subject_residues_resnames'].astype(str)))) for sn in sns_this])
 	# remap once to apply a first filter
 	resid_resname = dict([(sn,
 		odict(list(resid_resname[sn].items())[residues_remap.get(
@@ -271,15 +272,19 @@ def plot_protein_lipid_histograms(sns,kind,cutoff,**kwargs):
 			# note that we exclude the zero bin, which is otherwise included
 			peak_observations = max([max([np.array(list(
 				counts_raw[sn][k].values()))[:,1:].sum(axis=0).max() 
-			for k in counts_raw[sn]]) for sn in sns_this]) 
+				for k in counts_raw[sn]]) for sn in sns_this]) 
 			counts_total = dict([(sn,dict([(lipid,np.sum([counts_raw[sn][resid][lipid]
 				for resid in resid_resname[sn]],axis=0)) for lipid in lipids_this]))
 				for sn in sns_this])
 			peak_observations_total = max([np.array([np.array(list(counts_raw[sn][i].values()))[:,1:] 
 				for i in list(counts_raw[sn].keys())]).sum(axis=0).sum(axis=0).max() for sn in sns_this])
+			# the residues with nonzero counts are displayed only
+			resids_consensus = np.unique(np.concatenate([[k for k in counts_raw[sn] 
+				if np.array(list(counts_raw[sn][k].values()))[:,1:].sum()>0] for sn in sns_this],-1))
+			n_residues = len(resids_consensus)
 			# +++ TOO CUSTOM figure size
 			fig,axes = plt.subplots(
-				nrows=len(sns_this),ncols=n_residues+1,squeeze=False,figsize=(20,8))
+				nrows=len(sns_this),ncols=n_residues+1,squeeze=False,figsize=(10,10))
 			# get resids with nonzero bonds for each type by classifying simulations
 			#   and searching for nonzero bonds for each
 			proteins_unique = list(set([tuple(np.concatenate(
@@ -303,8 +308,14 @@ def plot_protein_lipid_histograms(sns,kind,cutoff,**kwargs):
 		for snum,sn in enumerate(sns_this):
 			if what=='raw': counts_raw[sn] = {}
 			resids = resid_resname[sn].keys()
-			resnames = data.this[sn]['subject_residues_resnames']
-			for rnum,(resid,resname) in enumerate(resid_resname[sn].items()):
+			# reduce residues to consensus here
+			if what=='plot':
+				resid_resname_loop = dict([(resid,resname) 
+					for resid,resname in resid_resname[sn].items() if resid in resids_consensus])
+			else: resid_resname_loop = resid_resname[sn]
+			#! python 3 we need to cast this?
+			resnames = data.this[sn]['subject_residues_resnames'].astype(str)
+			for rnum,(resid,resname) in enumerate(resid_resname_loop.items()):
 				# remove extra plots if fewer residues
 				if what=='raw': 
 					counts_raw[sn][resid] = {}
@@ -353,7 +364,7 @@ def plot_protein_lipid_histograms(sns,kind,cutoff,**kwargs):
 				#! the real one sums more
 				#! peak_observations_total = np.concatenate(counts_total[sn].values()).max()
 				stylize(ax,'All',peak_count,peak_observations_total)
-				ax.set_ylabel(sn)
+				ax.set_ylabel(work.metadata.meta.get(sn,{}).get('label',sn))
 		if what=='plot':
 			# hook: namer(kind,plot='protein_self_contacts')
 			namer_default = lambda kind,plot='protein_lipid_binding': (
@@ -361,7 +372,7 @@ def plot_protein_lipid_histograms(sns,kind,cutoff,**kwargs):
 			namer = kwargs.get('namer',namer_default)
 			zoom_figure(fig,3.0)
 			picturesave(namer(kind=kwargs.get('kind_label',kind)),work.plotdir,
-				backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+				backup=False,version=True,meta={'sns':sns_this},extras=[],dpi=300,form='png')
 
 if __name__=='__main__': 
 
@@ -375,11 +386,20 @@ if __name__=='__main__':
 
 	# subselect simulation names
 	sns_this = sns
+
+	# +++ select subplots with different simulations
+	collection_names = ['mdia2','gelsolin','nwasp']
+	sns_groups = dict([(c,work.metadata.collections[c]) 
+		for c in collection_names])
+
 	# select a sweep
 	surveys = []
+	# select cutoffs here (note that loading the 5.0 requires more memory)
 	for cutoff in [3.4,5.0][:1]: 
 		surveys.append({'kind':'contacts','cutoff':cutoff,
 			'kind_label':'contacts_%s'%cutoff})
+
+	surveys = [] #!!!!!!!!!!!!!!!!
 	# +++ assume salt bridge means cutoff 3.4 here
 	surveys.append({'kind':'salt_bridges',
 		'cutoff':3.4,'kind_label':'salt_bridges'})
@@ -410,56 +430,62 @@ if __name__=='__main__':
 
 	# select plots
 	do_plot_histograms = 1
-	do_plot_timeseries = 1
+	do_plot_timeseries = 0
 
 	# plot loop
 	for survey in surveys: 
-		cutoff = survey['cutoff']
-		kind = survey['kind']
-		data.set('contacts',select={'cutoff':cutoff,
-			'target':{'predefined':'lipid heavy'},
-			'subject':{'predefined':'protein heavy'}})
-		# select plots here
-		if do_plot_histograms: 
-			plot_protein_lipid_histograms(sns=sns_this,**survey)
-		if do_plot_timeseries:
-			plot_protein_lipid_timeseries(sns=sns_this,**survey)
+		# loop over sets of simulations
+		for sns_name,sns_this in (
+			('all',sns) if not sns_groups else sns_groups.items()):
+			cutoff = survey['cutoff']
+			kind = survey['kind']
+			data.set('contacts',select={'cutoff':cutoff,
+				'target':{'predefined':'lipid heavy'},
+				'subject':{'predefined':'protein heavy'}})
+			# select plots here
+			if do_plot_histograms: 
+				plot_protein_lipid_histograms(sns=sns_this,**survey)
+			if do_plot_timeseries:
+				plot_protein_lipid_timeseries(sns=sns_this,**survey)
 
-	# merge replicates
-	merge_rule = {
-		'gel_nochl':['gelbilayer_nochl','gelbilayer_nochl3'], 
-		'gel':['gelbilayerphys','gelbilayerphys2'],
-		'nwasp':['nwaspbilayernochl0','nwaspbilayer_nochl'],
-		'gelmut':['gelmutbilayer20'],
-		'mdia2_nopip2':['mdia2bilayernopip2']}
+	### replicate merging ...!!!
+	if False:
 
-	# select a post
-	target = dict(kind='salt_bridges')
-	# complete the metadata
-	meta_new = dict(post.get_meta(**target))
-	# only run this once
-	if meta_new not in post.meta:
-		this = post.get(**target)
-		# change the metadata
-		meta_new['merged'] = True
-		#! post.done does not work correctly! if not post.done(**meta_new):
+		# merge replicates
+		merge_rule = {
+			'gel_nochl':['gelbilayer_nochl','gelbilayer_nochl3'], 
+			'gel':['gelbilayerphys','gelbilayerphys2'],
+			'nwasp':['nwaspbilayernochl0','nwaspbilayer_nochl'],
+			'gelmut':['gelmutbilayer20'],
+			'mdia2_nopip2':['mdia2bilayernopip2']}
+
+		# select a post
+		target = dict(kind='salt_bridges')
+		# complete the metadata
+		meta_new = dict(post.get_meta(**target))
+		# only run this once
 		if meta_new not in post.meta:
-			that = {}
-			# merge replicates into a new post
-			for sn_sup,sns_sub in merge_rule.items():
-				that[sn_sup] = {}
-				for sname in sns_sub: 
-					for lipid in this[sname]:
-						if lipid not in that[sn_sup]: that[sn_sup][lipid] = np.array([])
-						# +++ merge rule: concatenate the frame list because histograms
-						that[sn_sup][lipid] = np.concatenate((
-							that[sn_sup][lipid],this[sname][lipid]))
-			post.add(data=that,meta=meta_new)
-	# one plot, now with merged data
-	survey = {'merged':True,'cutoff':3.4,'kind':'salt_bridges'}
-	extra = {'kind_label':'salt_bridges.merged'}
-	#! note that you cannot include extra in survey because some meta do not
-	#!   have the merged value, hence they will also match properly. this design
-	#!   is worth considering in more detail
-	plot_protein_lipid_timeseries(sns=post.get(**survey).keys(),
-		**dict(survey,**extra))
+			this = post.get(**target)
+			# change the metadata
+			meta_new['merged'] = True
+			#! post.done does not work correctly! if not post.done(**meta_new):
+			if meta_new not in post.meta:
+				that = {}
+				# merge replicates into a new post
+				for sn_sup,sns_sub in merge_rule.items():
+					that[sn_sup] = {}
+					for sname in sns_sub: 
+						for lipid in this[sname]:
+							if lipid not in that[sn_sup]: that[sn_sup][lipid] = np.array([])
+							# +++ merge rule: concatenate the frame list because histograms
+							that[sn_sup][lipid] = np.concatenate((
+								that[sn_sup][lipid],this[sname][lipid]))
+				post.add(data=that,meta=meta_new)
+		# one plot, now with merged data
+		survey = {'merged':True,'cutoff':3.4,'kind':'salt_bridges'}
+		extra = {'kind_label':'salt_bridges.merged'}
+		#! note that you cannot include extra in survey because some meta do not
+		#!   have the merged value, hence they will also match properly. this design
+		#!   is worth considering in more detail
+		plot_protein_lipid_timeseries(sns=post.get(**survey).keys(),
+			**dict(survey,**extra))
