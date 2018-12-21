@@ -127,7 +127,7 @@ def contacts(**kwargs):
 	# get coordinates from the hook
 	default_fetch_coordinates = {
 		'import_target':'codes/fetch_coordinates.py',
-		'function':'fetch_coordinates_subject_target'}
+		'function':'fetch_coordinates_via_metadata'}
 	fetch_coordinates = kwargs.get(
 		'fetch_coordinates',default_fetch_coordinates)
 	# hooks get the same arguments as compute functions
