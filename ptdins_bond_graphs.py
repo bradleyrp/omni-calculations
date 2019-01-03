@@ -11,6 +11,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import itertools
+import scipy
+import scipy.optimize
 
 @loader
 def load():
@@ -278,67 +280,8 @@ if False:
 
 if __name__=='__main__':
 
-	#! when the plots are ready
-	if False:
-		# figure
-		ax_pad = 0.2
-		zoom_fac = 1.
-		figscale = 10.0
-		figprop = 1.
-		zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
-		color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
-		fig = plt.figure(figsize=(figscale*figprop,figscale))
-		gs = gridspec.GridSpec(2,2)
-		axes = [plt.subplot(g) for g in gs]
-
-		zoom_figure(fig,zoom_fac)
-		plt.subplots_adjust(wspace=0.35,hspace=0.35)
-		picturesave('TMP5',work.plotdir,backup=False,
-			version=True,meta={},extras=[],dpi=300,form='png')
-
-	fr = 500 #! check out frame 100 it breaks your algo bro!
-
-	if False:
-		data.set('lipid_abstractor')
-		results = {}
-		for sn in work.sns():
-
-			incoming = post[sn]['incoming']
-			coords_subject = post[sn]['coords_subject']
-
-			dat = data.this[sn]
-			nmol = len(dat['resids'])
-			resid_to_index = dict(np.transpose([dat['resids'],np.arange(nmol)]))
-
-			# pairs are indexed by the selections
-			pairs_raw = np.transpose([incoming[fr][i] for i in ['subjects','targets']])
-			pairs_u = np.unique(pairs_raw,axis=0)
-			# subject (cation) is indexed by the selection
-			left = pairs_u[:,0]
-			# target (lipid) is re-indexed by the center of  the lipid
-			# the following mapping is from pairs_u (selection index) to target 
-			#   (selection) to resids to index in the lipid_abstractor results, which
-			#   is the centers of mass
-			right = np.array(list(map(lambda x:resid_to_index[x],target[pairs_u[:,1]].resids)))
-			# unique pairs
-			left,right = np.unique(np.transpose([left,right]),axis=0).T
-			# pairs by index for later reduction
-			pairs_inds = np.array([left,right]).T
-			sub_pts = coords_subject[fr][left]
-			obj_pts = dat['points'][fr][right]
-			pairs = np.array([sub_pts,obj_pts]).transpose((1,0,2))[...,:2]
-			# formulate a mesh object
-			vec = dat['vecs'][fr]
-
-	"""
-	pseudocode
-		get lipids in the top leaflet
-		get the indices of the lipid selection that corresponds to them in the contact map
-		get all cations bound to these lipids
-		draw lines between them with a newfangled minimal class
-	"""
-
 	mn_top = 0
+	fr = 200 #! check out frame 100 it breaks your algo bro!
 
 	data.set('lipid_abstractor')
 	dat_abs = data.this[sn]
@@ -387,42 +330,118 @@ if __name__=='__main__':
 	# unique bonds
 	bonds_u = np.unique(bonds_this,axis=0)
 
-	if False:
-		# subselect the target by the residues in the top leaflet
-		#! unused. this is wrong anyway! see notes below! target_sub_inds = np.where(np.in1d(post[sn]['target'].resids,top_inds))[0]
-		# get all bonds involving these residues. this list has two columns: the
-		#   first is the target selection index, and the second is the subject
-		bonds = np.transpose([post[sn]['incoming'][fr][k] for k in ['targets','subjects']])
-		# convert target selection index to resid to index in the lipid mesh monolayer
-		left_r = resids_to_mesh_ind[post[sn]['target'].resids[bonds[:,0]]]
-		if -1 in left_r: raise Exception('indexing error')
-		# retain the subject index from the original selection because these are cations
-		right_ind = bonds[:,1]
-		# bonds formulated as monolayer mesh index with subject index
-		bonds_this = np.transpose([left_r,right_ind])
-		# unique bonds
-		bonds_u = np.unique(bonds_this,axis=0)
-
 	"""
-### debugging above, currently if-falsed
-# which residues are not in the unique target residues?
-missings = np.array([i for i in np.arange(1,801) if i not in np.unique(post[sn]['target'].resids)])
-# they turn out to be the ones that are not in the mesh, which makes sense because they are cholesterol
-np.unique(resids_to_mesh_ind[missings])==np.array([-1]) # true
-# checking that subselected targets are those 
-np.unique(post[sn]['target'][target_sub_inds].resids) # this is fishy!
-# result is array([300, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512,
-       513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523, 524, 525,
-       526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538,
-       539, 540, 541, 542, 543, 544, 545, 546, 547, 548, 549, 550, 551,
-       552, 553, 554, 555, 556, 557, 558, 559, 560, 561, 562, 563, 564,
-       565, 566, 567, 568, 569, 570, 571, 572, 573, 574, 575, 576, 577,
-       578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 588, 589, 590,
-       591, 592, 593, 594, 595, 596, 597, 598, 599])
-# top_inds are where the mesh is in the top leaflet, so it is indexed by mesh points
-# problem is htat target_sub_inds is not used
+	pseudocode 
+		objective: identify clusters and wrap points
+		steps
+			1. identify clusters
+				get a list of all points assigned an index of -1
+				for each line
+					if both points are -1 give it a new index
+					else if either point is -1 give it the index of the other
+					else merge the clusters to the lower value
+			2. move points
+	incoming data structure
+		problem is that we want to have a set of non-redundant points so the clusters are well-defined
+		the left points are lipids and the right ones are cations
+		options:
+			A. start with a canonical listing of all possible points and then make a mapping for each one
+			B. at each frame collect the distinct points for each side and reindex them
+		sticking with option A because that might be easier for later to track changes
+		but are the points in the mesh object the same for each frame?
+		it might actually be harder to formulate a single structure
+	"""
 
-"""
+	# collect distinct indices that could be observed on the left and right assuming disjoint points in each
+	left_inds = ind_mono_to_mesh[mn_top]
+	n_cations = len(post[sn]['subject'])
+	right_inds = np.arange(n_cations)
+	points_inds = np.arange(len(left_inds)+len(right_inds)).astype(int)
+	lr_offset = len(left_inds)
+	# create a mapping from left/right indices to points_inds indices
+	remapper = {}
+	remapper['left'] = dict(zip(left_inds,np.arange(len(left_inds)).astype(int)))
+	remapper['right'] = dict(zip(right_inds,(np.arange(len(right_inds))+lr_offset).astype(int)))
+
+	# reindex bonds for the main set of points
+	bonds_reform = np.array([[remapper[j][i] for i in bonds_u.T[jj]] 
+		for jj,j in enumerate(['left','right'])]).T
+
+	# arguments to the cluster finder
+	inds = points_inds
+	edges = bonds_reform
+	# cluster algorithm requires edges and a set of base points indexed from zero
+	if np.any(points_inds!=np.arange(len(points_inds)).astype(int)):
+		raise Exception('incoming points indices must be a proper range')
+	clusters = np.ones(len(inds)).astype(int)*-1
+	# loop over edges 
+	n_clusters = 0
+	for i,j in edges:
+		if clusters[i]==-1 and clusters[j]==-1:
+			clusters[i] = clusters[j] = n_clusters
+			n_clusters += 1
+		elif clusters[i]==-1 and clusters[j]!=-1:
+			clusters[i] = clusters[j]
+		elif clusters[i]!=-1 and clusters[j]==-1:
+			clusters[j] = clusters[i]
+		# merge clusters
+		else:
+			existing = [clusters[i],clusters[j]]
+			for e in existing: 
+				clusters[np.where(clusters==e)] = n_clusters
+			n_clusters += 1
+	# relabel all clusters with zero indicating singletons
+	cluster_inds = dict(zip(range(len(clusters)),np.unique(clusters)))
+	for k,v in cluster_inds.items():
+		clusters[np.where(clusters==v)] = k
+	# once we have  the clusters we need to map back to the points themselves
+	pts_order = np.concatenate([
+		#! limit the points when selecting the dat
+		dat['%d.%d.points'%(mn,fr)][:len(left_inds)],
+		post[sn]['coords_subject'][fr],])
+	pts_order_bak = np.array(pts_order)
+
+	vec = vecs[fr][:2]
+
+	clusters_u = np.unique(clusters)
+	for cc,cnum in enumerate(clusters_u):
+		print('optimizing %d/%d'%(cc+1,len(clusters_u)))
+		#! ignore loners
+		if cnum==0: continue
+		# get points in one cluster
+		this_cluster = np.where(clusters==cnum)
+		#! np.linalg.norm(pts_order[this_cluster][:,:2]-pts_order[this_cluster][:,:2].mean(axis=0))
+		#! this = pts_order[this_cluster][:,:2]-pts_order[this_cluster][:,:2].mean(axis=0)
+		#! np.sqrt(np.sum(this.T[0]**2+this.T[1]**2)) 
+		#! or: np.linalg.norm(pts_order[this_cluster][:,:2]-pts_order[this_cluster][:,:2].mean(axis=0))
+		#! def centroid(shifts)
+		pts_this = pts_order[this_cluster][:,:2]
+		arg0 = np.zeros(len(pts_this)*2)
+		def func(arg):
+			x = pts_this + arg.astype(int).reshape((2,-1)).T*vec
+			#! return np.linalg.norm(x-x.mean(axis=0))
+			return np.sum((x-x.mean(axis=0))**2)
+		ans = scipy.optimize.minimize(fun=func,x0=(arg0,),method='Powell')
+		shifts = ans.x.astype(int).reshape((2,-1))
+		if (shifts!=0).any():
+			print('moving %d'%cc)
+			print(shifts)
+			#! no change if you do: pts_order[this_cluster][:,:2] += shifts.T*vec
+			pts_order[this_cluster,:2] += shifts.T*vec
+
+	# collapse borders by finding all cations bound to at least two lipids to make a link
+	#! hacking again. limit the points when selecting the dat
+	#! pts_red = dat['%d.%d.points'%(mn,fr)][:len(left_inds)]
+	#! changing to pts_order so things are fixed over PBCs
+	pts_red = pts_order[:len(left_inds)]
+	#! use the fact  that the previous edge list had cations on the right
+	right_u = np.unique(edges[:,1])
+	reduced_bonds = [j for j in [edges[np.where(edges[:,1]==i)[0],0] for i in right_u] if len(j)>1]
+
+	edges_reduced = np.concatenate([
+		list(itertools.combinations(v,2))
+		for v in reduced_bonds])
+	pts_lipids = pts_red[np.unique(edges_reduced)][:,:2]
 
 	if 1:
 
@@ -437,17 +456,51 @@ np.unique(post[sn]['target'][target_sub_inds].resids) # this is fishy!
 		gs = gridspec.GridSpec(2,2)
 		axes = [plt.subplot(g) for g in gs]
 
+		# basic view with lines across PBCs is suppressed here
+		if False:
+			ax = axes[0]
+
+			ax.set_title('lipids (black) bound to cations (red)')
+			# plot the lipid points
+			pts = dat['%d.%d.points'%(mn,fr)]
+			pts_lipids = pts[np.unique(ind_mesh_to_mono[bonds_u[:,0]])][:,:2]
+			ax.scatter(*pts_lipids.T,s=2,c='k')
+			pts_cations = post[sn]['coords_subject'][fr][np.unique(bonds_u[:,1])][:,:2]
+			ax.scatter(*pts_cations.T,s=2,c='r')
+
+			# draw lines between all points
+			lines = np.array([pts[ind_mesh_to_mono[bonds_u[:,0]]][:,:2],
+				post[sn]['coords_subject'][fr][bonds_u[:,1]][:,:2]]).transpose((1,0,2))
+			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
+			ax.add_collection(lc)		
+
 		ax = axes[0]
+		ax.set_title('clusters after correcting PBCs')
 
-		# plot the lipid points
-		pts = dat['%d.%d.points'%(mn,fr)]
-		pts_lipids = pts[np.unique(ind_mesh_to_mono[bonds_u[:,0]])][:,:2]
-		ax.scatter(*pts_lipids.T,s=2,c='k')
-		pts_cations = post[sn]['coords_subject'][fr][np.unique(bonds_u[:,1])][:,:2]
-		ax.scatter(*pts_cations.T,s=2,c='r')
+		# randomized order
+		color_inds = np.unique(clusters)
+		np.random.shuffle(color_inds)
+		def get_color(i,n,name='winter'): 
+			return mpl.cm.__dict__[name](float(color_inds[i])/n)
+		# the conditional makes the cations red because they are sequentially last
+		color = [get_color(clusters[i],n=np.unique(clusters).shape[0]) 
+			if i<len(left_inds) else 'r' 
+			for i in inds if clusters[i]!=0]
+		pts_order_filter = np.array([pts_order[ii,:2] for ii,i in enumerate(pts_order) if clusters[ii]!=0])
+		ax.scatter(*pts_order_filter.T,color=color,s=10)
+		lines = np.array([pts_order[edges[:,0]][:,:2],pts_order[edges[:,1]][:,:2]]).transpose((1,0,2))
+		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
+		ax.add_collection(lc)		
 
-		# draw lines between all points
-		lines = np.array([pts[ind_mesh_to_mono[bonds_u[:,0]]][:,:2],post[sn]['coords_subject'][fr][bonds_u[:,1]][:,:2]]).transpose((1,0,2))
+		ax = axes[1]
+		ax.set_title('lipid-cation-lipid bonds')
+
+		# randomized order
+		#! we have to plot dots for pts_lipids which are the unique cation-involved lipids
+		#!   and then use pts_red to be indexed by edges_reduced
+		ax.scatter(*pts_lipids.T,color='k',s=10)
+		lines = np.array([pts_red[edges_reduced[:,0]][:,:2],
+			pts_red[edges_reduced[:,1]][:,:2]]).transpose((1,0,2))
 		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
 		ax.add_collection(lc)		
 
@@ -458,3 +511,4 @@ np.unique(post[sn]['target'][target_sub_inds].resids) # this is fishy!
 		zoom_figure(fig,zoom_fac)
 		plt.subplots_adjust(wspace=0.35,hspace=0.35)
 		picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+
