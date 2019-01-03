@@ -77,242 +77,47 @@ def load():
 			subject=subject,target=target,times=times,
 			vecs=vecs,nframes=nframes)
 
-#! previously followed the computation of post
-if False:
+def trim_graph_fat(points,edges):
+	"""
+	"""
+	### need a fast reindex operation to select only the points in edges
+	# currently pts_order and edges includes the entire set of lipids and cations while only some are 
+	#   connected by bonds. hence we need a reducer step that reindexes. how to do a fast reindex?
+	# fast reindexer method (disjoint case) 
+	#! wut is disjoint case? explain
 
-	class PeriodicMesh:
-		def __init__(self,pairs,pairs_inds,vec):
-			self.pairs = pairs
-			self.pairs_inds = pairs_inds
-			self.vec = vec
-			# left and right points come from the pairs
-			self.ptsl,self.ptsr = self.pairs.transpose((1,0,2))
-			self.points = {}
-			self.lines = {}
-			self.inds = {}
+	# arguments are the original list of points and the edges which may not include all of them
+	#!! originals = pts_order
+	#!! edges = edges
+	#!! we mark the points that are necessary for the left and right items in the edges list
+	#! retained_l = np.zeros(len(originals)).astype(int)
+	#! retained_r = np.zeros(len(originals)).astype(int)
+	# we get unique points indices for the left and right side
+	originals_u_l = np.unique(edges[:,0])
+	originals_u_r = np.unique(edges[:,1])
+	#!! find the edges that are in the unique l/r points list
+	#! retained_l[originals_u_l[np.where(np.in1d(edges[:,0],originals_u_l))]] = 1
+	#! retained_r[originals_u_r[np.where(np.in1d(edges[:,1],originals_u_r))]] = 1
+	# reduced indices
+	reds = np.concatenate([originals_u_l,originals_u_r])
+	edges_subsel = [np.in1d(edges[:,0],originals_u_l),np.in1d(edges[:,1],originals_u_r)]
+	# confirm that any unique lipid on the left is also bound to a cation on the right
+	if not np.all(np.any(edges_subsel,axis=0)==np.all(edges_subsel,axis=0)): raise Exception('error')
+	# get the subset of edges using the old indexing
+	edges_subsel_original_inds = edges[np.where(np.all(edges_subsel,axis=0))]
+	# the remapper will allow us to put the old edges indices into a mapping from old to new
+	remapper = np.ones(len(points)).astype(int)*-1
+	# the items in the old list which are not in the new list are -1 while the others are indexed by 
+	#   the reduced items stored in the reds variable
+	remapper[reds] = np.arange(len(reds)).astype(int)
+	edges_reduced = remapper[edges]
+	points_reduced = points[reds]
+	return points_reduced,edges_reduced
 
-			# make lipid-cation links
-			self.make_links(name='lipid_cation',left=self.ptsl,right=self.ptsr,
-				pairs=self.pairs,inds=self.pairs_inds)
-
-			# perform the reduction
-			left,right = self.pairs_inds.T
-			# reduce collcetions
-			hashed = dict([(l,list(right[np.where(left==l)[0]])) for l in np.unique(left)])
-			hashed_coupled = dict([(k,v) for k,v in hashed.items() if len(v)>1])
-			# itertools is sorted so we have no danger of repeats
-			if not hashed_coupled: 
-				self.lines['reduced'] = []
-				return
-			self.links = np.unique(np.concatenate([list(itertools.combinations(v,2)) 
-				for v in hashed_coupled.values()]),axis=0)
-			links_lines = dat['points'][fr][self.links][...,:2]
-			self.lines['reduced'] = links_lines
-			self.points['reduced'] = links_lines.transpose((1,0,2))
-
-			# make lipid-lipid links
-			self.make_links(name='lipid_lipid',
-				left=self.points['reduced'][:,0],right=self.points['reduced'][:,1],
-				pairs=self.lines['reduced'],inds=self.links)
-
-			#! debug
-			self.hashed = hashed
-			self.hashed_coupled = hashed_coupled
-
-		def make_links(self,name,left,right,pairs,inds):
-			ptsl,ptsr,pairs = left,right,pairs
-			vec = self.vec
-			# convert points into lines
-			n_links = len(pairs)
-			# reformulate into pairs
-			lines = np.array(pairs)
-			# dealing with PBCs in a reactive way: find long lines and duplicate points
-			deltas = lines.transpose((1,0,2)).ptp(axis=0)
-			# identify boundary jumps
-			jumps = np.transpose(np.where(deltas>vec[:2]/2.))
-			extra_lines = []
-			ptsl_extra = []
-			ptsr_extra = []
-			inds_extra = []
-			# for each jump we identify the axis of the jump and then duplicate the point along that axis
-			for ind,dim in jumps:
-				# dim tells us the dimension that jumps, now we find direction, which
-				#   explains the order in which we need to move the first or second 
-				#   points in the pair either positive or negative directions
-				way = 1*np.diff(lines[ind][:,dim])[0]>0
-				shifts = np.zeros((2,2,2))
-				shifts[0,0,dim] = 2*way-1
-				shifts[1,1,dim] = 1-2*way
-				for s in shifts:
-					this = lines[ind]+s*vec[:2]
-					inds_extra.append(inds[ind])
-					extra_lines.append(this)
-					ptsl_extra.append(this[0])
-					ptsr_extra.append(this[1])
-			extra_lines = np.array(extra_lines)
-			inds_extra = np.array(inds_extra)
-			if len(ptsl_extra)>0:
-				ptsl = np.concatenate((ptsl[:,:2],ptsl_extra))
-				ptsr = np.concatenate((ptsr[:,:2],ptsr_extra))
-			lines_keep = np.ones(lines.shape[0],dtype=bool)
-			lines_keep[jumps[:,0]] = False
-			lines = lines[lines_keep]
-			if len(extra_lines)>0:
-				lines = np.concatenate((lines,extra_lines))
-				inds = np.concatenate((inds,inds_extra))
-			# package
-			self.lines[name] = lines
-			self.points[name] = np.array([ptsl,ptsr])
-			self.inds[name] = inds
-
-	data.set('lipid_abstractor')
-	results = {}
-	for sn in work.sns():
-
-		incoming = post[sn]['incoming']
-		coords_subject = post[sn]['coords_subject']
-
-		dat = data.this[sn]
-		nmol = len(dat['resids'])
-		resid_to_index = dict(np.transpose([dat['resids'],np.arange(nmol)]))
-
-		fr = 500 #! check out frame 100 it breaks your algo bro!
-
-		# pairs are indexed by the selections
-		pairs_raw = np.transpose([incoming[fr][i] for i in ['subjects','targets']])
-		pairs_u = np.unique(pairs_raw,axis=0)
-		# subject (cation) is indexed by the selection
-		left = pairs_u[:,0]
-		# target (lipid) is re-indexed by the center of  the lipid
-		# the following mapping is from pairs_u (selection index) to target 
-		#   (selection) to resids to index in the lipid_abstractor results, which
-		#   is the centers of mass
-		right = np.array(list(map(lambda x:resid_to_index[x],target[pairs_u[:,1]].resids)))
-		# unique pairs
-		left,right = np.unique(np.transpose([left,right]),axis=0).T
-		# pairs by index for later reduction
-		pairs_inds = np.array([left,right]).T
-		sub_pts = coords_subject[fr][left]
-		obj_pts = dat['points'][fr][right]
-		pairs = np.array([sub_pts,obj_pts]).transpose((1,0,2))[...,:2]
-		# formulate a mesh object
-		vec = dat['vecs'][fr]
-		pm = PeriodicMesh(pairs=pairs,pairs_inds=pairs_inds,vec=vec)
-		results[sn] = pm
-
-	### plot functions
-
-	def birdseye(ax,sn):
-		global results
-		pm = results[sn]
-		# plot pbc
-		vec = pm.vec
-		ax.plot(*np.array(
-			[[0,0],[vec[0],0],[vec[0],vec[1]],[0,vec[1]]])[np.arange(0,5)%4].T,
-			zorder=zorder['pbc'],lw=0.5,c='k')
-		ax.set_xlim((vec[0]*(-1*ax_pad),vec[0]*(1.+ax_pad)))
-		ax.set_ylim((vec[1]*(-1*ax_pad),vec[1]*(1.+ax_pad)))
-		ax.set_aspect('equal')
-		ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
-		ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
-		ax.set_xlabel('x (nm)')
-		ax.set_ylabel('y (nm)')
-
-	def subplot_lipid_cation(ax,sn):
-		"""Plot the lipid-cation links."""
-		global results,zorder
-		pm = results[sn]
-		colors = 'rk'
-		for ii,pts in enumerate(pm.points['lipid_cation']):
-			if False: # colors not working. probably have the outer leaflet in the data
-				if ii==1: 
-					color = [color_lipids[i] for i in dat['resnames'][pm.inds['lipid_cation'][:,1]].astype(str)]
-				else: color = 'r'
-			else: color = colors[ii]
-			ax.scatter(pts[:,0],pts[:,1],s=2,color=color,zorder=zorder['cations'])
-		# links between lipids
-		lines = pm.lines['lipid_cation']
-		if len(lines)!=None:
-			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-			ax.add_collection(lc)
-		ax.set_title('bound cations, '+work.metadata.meta[sn]['ion_label'])
-
-	def subplot_lipid_lipid(ax,sn):
-		"""Plot the lipid-cation links."""
-		global results,zorder
-		pm = results[sn]
-		#! for some reason the lipid_lipid points are only the ones crossing PBCs
-		for name in ['reduced','lipid_lipid']:
-			for ii,pts in enumerate(pm.points[name]):
-				ax.scatter(pts[:,0],pts[:,1],s=2,color='k',zorder=zorder['cations'])
-		# links between lipids
-		lines = pm.lines['lipid_lipid']
-		if len(lines)!=None:
-			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-			ax.add_collection(lc)
-		ax.set_title('lipid-cation-lipid links, '+work.metadata.meta[sn]['ion_label'])
-
-	# figure layout
-	pspecs_base = [{'func':subplot_lipid_cation},{'func':subplot_lipid_lipid}]
-	pspecs = [{'func':pbase['func'],'sn':sn}
-		for pbase in pspecs_base
-		for sn in sns]
-		
-	import matplotlib.gridspec as gridspec
-	
-	# figure
-	ax_pad = 0.2
-	zoom_fac = 1.
-	figscale = 10.0
-	figprop = 1.
-	zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
-	color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
-	fig = plt.figure(figsize=(figscale*figprop,figscale))
-	gs = gridspec.GridSpec(2,2)
-	axes = [plt.subplot(g) for g in gs]
-	for pspec,ax in zip(pspecs,axes):
-		sn = sn=pspec['sn']
-		pspec['func'](ax=ax,sn=sn)
-		birdseye(ax=ax,sn=sn)
-	zoom_figure(fig,zoom_fac)
-	plt.subplots_adjust(wspace=0.35,hspace=0.35)
-	picturesave('TMP4',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
-
-if __name__=='__main__':
-
-	mn_top = 0
-	fr = 200 #! check out frame 100 it breaks your algo bro!
-
-	data.set('lipid_abstractor')
-	dat_abs = data.this[sn]
-	data.set('lipid_mesh')
-	dat = data.this[sn]
-	imono = dat['monolayer_indices']
-	resnames = dat['resnames']
-	resids_all = dat_abs['resids']
-	# alternate formulation is faster, but this is really the numpy version of:
-	#   resids_to_mesh_ind = dict([(i,ii) for ii,i in enumerate(resids_all)])
-	resids_to_mesh_ind = (np.ones(max(1+np.unique(resids_all)))*-1).astype(int)
-	for ii,i in enumerate(resids_all): resids_to_mesh_ind[i] = ii
-	# indices for lipids in the top leaflet
-	top_inds = np.where(imono==mn_top)[0]
-	# mapping from the monolayer index (e.g. 0-299 for lipids in a leaflet of
-	#   a bilayer with cholesterol where we ignore cholesterol) to the mesh 
-	#   index (e.g. 0-599 when there might be 800 molecules total)
-	ind_mono_to_mesh = [np.arange(imono.shape[0])[np.where(imono==mn)] 
-		for mn in range(2)]
-	# reverse mapping so we can go from mesh index (e.g. 0-599) to index
-	#   in the list of monolayer points
-	#! you could use a dict lookup e.g. dict(zip(*np.array([
-	#!   ind_mono_to_mesh[mn],np.arange(ind_mono_to_mesh[mn].shape[0])])))
-	# just pasting in arange into the blocks of 0 and 1 in imono
-	ind_mesh_to_mono = np.array(imono)
-	for mn in range(2):
-		ind_mesh_to_mono[np.where(imono==mn)] = \
-			np.arange(len(np.where(imono==mn)[0]))
-
-	mn = mn_top
-
+def compute_cluster_network(fr):
+	"""
+	...!!!
+	"""
 	# get the targets and subjects in their native index
 	left,right = np.array([post[sn]['incoming'][fr][k] for k in ['targets','subjects']])
 	# get residues for the target lipids
@@ -329,28 +134,6 @@ if __name__=='__main__':
 	bonds_this = np.transpose([left_r,right_ind])
 	# unique bonds
 	bonds_u = np.unique(bonds_this,axis=0)
-
-	"""
-	pseudocode 
-		objective: identify clusters and wrap points
-		steps
-			1. identify clusters
-				get a list of all points assigned an index of -1
-				for each line
-					if both points are -1 give it a new index
-					else if either point is -1 give it the index of the other
-					else merge the clusters to the lower value
-			2. move points
-	incoming data structure
-		problem is that we want to have a set of non-redundant points so the clusters are well-defined
-		the left points are lipids and the right ones are cations
-		options:
-			A. start with a canonical listing of all possible points and then make a mapping for each one
-			B. at each frame collect the distinct points for each side and reindex them
-		sticking with option A because that might be easier for later to track changes
-		but are the points in the mesh object the same for each frame?
-		it might actually be harder to formulate a single structure
-	"""
 
 	# collect distinct indices that could be observed on the left and right assuming disjoint points in each
 	left_inds = ind_mono_to_mesh[mn_top]
@@ -403,9 +186,10 @@ if __name__=='__main__':
 
 	vec = vecs[fr][:2]
 
+	#! this section is slow: print('before opt')
 	clusters_u = np.unique(clusters)
 	for cc,cnum in enumerate(clusters_u):
-		print('optimizing %d/%d'%(cc+1,len(clusters_u)))
+		#! print('optimizing %d/%d'%(cc+1,len(clusters_u)))
 		#! ignore loners
 		if cnum==0: continue
 		# get points in one cluster
@@ -428,6 +212,7 @@ if __name__=='__main__':
 			print(shifts)
 			#! no change if you do: pts_order[this_cluster][:,:2] += shifts.T*vec
 			pts_order[this_cluster,:2] += shifts.T*vec
+	#! print('after opt')
 
 	# collapse borders by finding all cations bound to at least two lipids to make a link
 	#! hacking again. limit the points when selecting the dat
@@ -438,52 +223,100 @@ if __name__=='__main__':
 	right_u = np.unique(edges[:,1])
 	reduced_bonds = [j for j in [edges[np.where(edges[:,1]==i)[0],0] for i in right_u] if len(j)>1]
 
-	edges_reduced = np.concatenate([
+	edges_reduced_basic = np.concatenate([
 		list(itertools.combinations(v,2))
 		for v in reduced_bonds])
-	pts_lipids = pts_red[np.unique(edges_reduced)][:,:2]
+	#! pts_lipids = pts_red[np.unique(edges_reduced)][:,:2]
 
-	if 1:
+	# package
+	points_reduced,edges_reduced = trim_graph_fat(pts_order,edges)
+	points_reduced_lipids,edges_reduced_lipids = trim_graph_fat(pts_red,edges_reduced_basic)
+	outgoing = dict(
+		pts=points_reduced,edges=edges_reduced,
+		points_reduced_lipids=points_reduced_lipids,edges_reduced_lipids=edges_reduced_lipids,
+		p2=pts_red,e2=edges_reduced_basic)
+	return outgoing
 
-		# figure
-		ax_pad = 0.2
-		zoom_fac = 1.
-		figscale = 10.0
-		figprop = 1.
-		zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
-		color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
-		fig = plt.figure(figsize=(figscale*figprop,figscale))
-		gs = gridspec.GridSpec(2,2)
-		axes = [plt.subplot(g) for g in gs]
+def proccer(sn):
+	mn_top = 0
 
-		# basic view with lines across PBCs is suppressed here
-		if False:
-			ax = axes[0]
+	data.set('lipid_abstractor')
+	dat_abs = data.this[sn]
+	data.set('lipid_mesh')
+	dat = data.this[sn]
+	imono = dat['monolayer_indices']
+	resnames = dat['resnames']
+	resids_all = dat_abs['resids']
+	# alternate formulation is faster, but this is really the numpy version of:
+	#   resids_to_mesh_ind = dict([(i,ii) for ii,i in enumerate(resids_all)])
+	resids_to_mesh_ind = (np.ones(max(1+np.unique(resids_all)))*-1).astype(int)
+	for ii,i in enumerate(resids_all): resids_to_mesh_ind[i] = ii
+	# indices for lipids in the top leaflet
+	top_inds = np.where(imono==mn_top)[0]
+	# mapping from the monolayer index (e.g. 0-299 for lipids in a leaflet of
+	#   a bilayer with cholesterol where we ignore cholesterol) to the mesh 
+	#   index (e.g. 0-599 when there might be 800 molecules total)
+	ind_mono_to_mesh = [np.arange(imono.shape[0])[np.where(imono==mn)] 
+		for mn in range(2)]
+	# reverse mapping so we can go from mesh index (e.g. 0-599) to index
+	#   in the list of monolayer points
+	#! you could use a dict lookup e.g. dict(zip(*np.array([
+	#!   ind_mono_to_mesh[mn],np.arange(ind_mono_to_mesh[mn].shape[0])])))
+	# just pasting in arange into the blocks of 0 and 1 in imono
+	ind_mesh_to_mono = np.array(imono)
+	for mn in range(2):
+		ind_mesh_to_mono[np.where(imono==mn)] = \
+			np.arange(len(np.where(imono==mn)[0]))
 
-			ax.set_title('lipids (black) bound to cations (red)')
-			# plot the lipid points
-			pts = dat['%d.%d.points'%(mn,fr)]
-			pts_lipids = pts[np.unique(ind_mesh_to_mono[bonds_u[:,0]])][:,:2]
-			ax.scatter(*pts_lipids.T,s=2,c='k')
-			pts_cations = post[sn]['coords_subject'][fr][np.unique(bonds_u[:,1])][:,:2]
-			ax.scatter(*pts_cations.T,s=2,c='r')
+	mn = mn_top
+	fr = 200
+	outgoing = compute_cluster_network(fr)
+	return outgoing
 
-			# draw lines between all points
-			lines = np.array([pts[ind_mesh_to_mono[bonds_u[:,0]]][:,:2],
-				post[sn]['coords_subject'][fr][bonds_u[:,1]][:,:2]]).transpose((1,0,2))
-			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-			ax.add_collection(lc)		
+if __name__=='__main__':
 
+	if 'postpost' not in globals():
+		postpost = {}
+		for sn in ['membrane-v531','membrane-v532']:
+			postpost[sn] = proccer(sn)
+
+	# figure
+	ax_pad = 0.2
+	zoom_fac = 1.
+	figscale = 10.0
+	figprop = 1.
+	zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
+	color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
+	fig = plt.figure(figsize=(figscale*figprop,figscale))
+	gs = gridspec.GridSpec(2,2)
+	axes = [plt.subplot(g) for g in gs]
+
+	# basic view with lines across PBCs is suppressed here
+	if False:
+		ax = axes[0]
+		ax.set_title('lipids (black) bound to cations (red)')
+		# plot the lipid points
+		pts = dat['%d.%d.points'%(mn,fr)]
+		pts_lipids = pts[np.unique(ind_mesh_to_mono[bonds_u[:,0]])][:,:2]
+		ax.scatter(*pts_lipids.T,s=2,c='k')
+		pts_cations = post[sn]['coords_subject'][fr][np.unique(bonds_u[:,1])][:,:2]
+		ax.scatter(*pts_cations.T,s=2,c='r')
+		# draw lines between all points
+		lines = np.array([pts[ind_mesh_to_mono[bonds_u[:,0]]][:,:2],
+			post[sn]['coords_subject'][fr][bonds_u[:,1]][:,:2]]).transpose((1,0,2))
+		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
+		ax.add_collection(lc)		
+
+	if False:
 		ax = axes[0]
 		ax.set_title('clusters after correcting PBCs')
-
 		# randomized order
 		color_inds = np.unique(clusters)
 		np.random.shuffle(color_inds)
-		def get_color(i,n,name='winter'): 
-			return mpl.cm.__dict__[name](float(color_inds[i])/n)
+		color_hash = dict([(i,mpl.cm.__dict__['winter'](float(ii)/len(color_inds)))
+			for ii,i in enumerate(color_inds)])
 		# the conditional makes the cations red because they are sequentially last
-		color = [get_color(clusters[i],n=np.unique(clusters).shape[0]) 
+		color = [color_hash[clusters[i]] 
 			if i<len(left_inds) else 'r' 
 			for i in inds if clusters[i]!=0]
 		pts_order_filter = np.array([pts_order[ii,:2] for ii,i in enumerate(pts_order) if clusters[ii]!=0])
@@ -492,23 +325,41 @@ if __name__=='__main__':
 		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
 		ax.add_collection(lc)		
 
-		ax = axes[1]
-		ax.set_title('lipid-cation-lipid bonds')
+	for snum,sn in enumerate(sns):
 
+		outgoing = postpost[sn]
+
+		ax = axes[0+2*snum]
+		ax.set_title('lipid-cation-lipid bonds')
 		# randomized order
 		#! we have to plot dots for pts_lipids which are the unique cation-involved lipids
 		#!   and then use pts_red to be indexed by edges_reduced
-		ax.scatter(*pts_lipids.T,color='k',s=10)
+		pts_red,edges_reduced = outgoing['pts'],outgoing['edges']
+		ax.scatter(*pts_red[:,:2].T,color='k',s=10)
 		lines = np.array([pts_red[edges_reduced[:,0]][:,:2],
 			pts_red[edges_reduced[:,1]][:,:2]]).transpose((1,0,2))
 		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
 		ax.add_collection(lc)		
 
-		if False:
-			for pspec,ax in zip(pspecs,axes):
-				sn = sn=pspec['sn']
-				pspec['func'](ax=ax,sn=sn)
-		zoom_figure(fig,zoom_fac)
-		plt.subplots_adjust(wspace=0.35,hspace=0.35)
-		picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+		ax = axes[1++2*snum]
+		ax.set_title('?')
+		# randomized order
+		#! we have to plot dots for pts_lipids which are the unique cation-involved lipids
+		#!   and then use pts_red to be indexed by edges_reduced
+		pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
+		pts_red = outgoing['points_reduced_lipids']
+		edges_reduced = outgoing['edges_reduced_lipids']
+		ax.scatter(*pts_red[:,:2].T,color='k',s=10)
+		lines = np.array([pts_red[edges_reduced[:,0]][:,:2],
+			pts_red[edges_reduced[:,1]][:,:2]]).transpose((1,0,2))
+		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
+		ax.add_collection(lc)		
+
+	if False:
+		for pspec,ax in zip(pspecs,axes):
+			sn = sn=pspec['sn']
+			pspec['func'](ax=ax,sn=sn)
+	zoom_figure(fig,zoom_fac)
+	plt.subplots_adjust(wspace=0.35,hspace=0.35)
+	picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
 
