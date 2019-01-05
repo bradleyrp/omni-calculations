@@ -43,6 +43,30 @@ calculations:
               cluster_neighbors: 3
               topologize_tolerance: 0.1
               lipid_tip: "(not resname CHL1 and name P) or (resname CHL1 and name H3')"
+  lipid_mesh:
+    uptype: post
+    slice_name: current
+    collections: cursor
+    specs:
+      upstream:
+        lipid_abstractor:
+          selector:
+            loop:
+              - lipid_com
+              #- lipid_chol_com
+              #- lipid_chol_com_headless
+  ptdins_bond_graphs_calc:
+    uptype: post
+    slice_name: current
+    collections: cursor
+    specs:
+      upstream:
+        lipid_mesh:
+          upstream: 
+            lipid_abstractor:
+              selector: lipid_com        
+        lipid_abstractor:
+          selector: lipid_com
 plots:
   ptdins_percolate: 
     script: ptdins_bond_graphs.py
@@ -52,3 +76,8 @@ plots:
     calculation: 
       lipid_abstractor:
         selector: lipid_com
+      lipid_mesh:
+        upstream: 
+          lipid_abstractor:
+            selector: lipid_com
+      ptdins_bond_graphs_calc: {}

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import os
 import MDAnalysis
 import numpy as np
 from omni import WorkSpace
@@ -74,7 +75,7 @@ def compute_cluster_network(fr,mn):
 	Extract a lipid-cation-lipid bond network and reduce it to a network of lipid-lipid bonds mediated
 	by the cations.
 	"""
-	global dat,dat_abs,post,data
+	global dat,dat_abs,post,data,sn,vecs
 	global resids_all,imono,resids_to_mesh_ind
 	global top_inds,ind_mono_to_mesh,ind_mesh_to_mono
 	# get the targets and subjects in their native index
@@ -198,18 +199,111 @@ def compute_cluster_network(fr,mn):
 		points_reduced_lipids=points_reduced_lipids,edges_reduced_lipids=edges_reduced_lipids)
 	return outgoing
 
-def postprocess(sn):
+def clusters_to_radius_gyration(cluster_object):
 	"""
-	Compute the clusters for a simulation.
+	Compute radius of gyration for clusters in a single cluster object.
 	"""
-	global dat,dat_abs,post,data
+	pts = cluster_object['points_reduced_lipids']
+	edges = cluster_object['edges_reduced_lipids']
+	clusters = cluster_object['clusters_lipids']
+	reindex = cluster_object['lipids_reindex']
+	clusters_this = clusters[reindex]
+	clusters_inds = np.unique(clusters_this)
+	pts_grouped = [pts[np.where(clusters_this==i)][:,:2] for i in clusters_inds]
+	rgs = [
+		np.sqrt(np.sum(np.linalg.norm(this-this.mean(axis=0),axis=1)**2))
+		for this in pts_grouped]
+	return np.array(rgs)
+
+def ptdins_bond_graphs_calc(**kwargs):
+
+	"""
+	LIPID ABSTRACTOR
+	Reduce a bilayer simulation to a set of points.
+	"""
+
+	#@loader
+	#def load():
+	#	work = WorkSpace(analysis=True)
+	#	data = work.plotload(plotname='ptdins_percolate')
+	#	sns = work.sns()[::-1]
+
+	#! hacking in quickly from a plot script
+	global post,sn,vecs
+	global dat,dat_abs,post,data,sn
 	global resids_all,imono,resids_to_mesh_ind
 	global top_inds,ind_mono_to_mesh,ind_mesh_to_mono
+	post = {}
+	work = kwargs['workspace']
+	sn = kwargs['sn']
+	kwargs_incoming = kwargs
+
+	#! running this block in the loop causes failures of some kind
+	# custom parameters. fetch_coordinates clones automacs
+	#! need a way of sync'ing automacs if there are changes?
+	from calcs.codes.fetch_coordinates import get_lipid_resnames
+	lipid_resnames = get_lipid_resnames(work)
+
+	distance_cutoff = work.metadata.variables['hydration_cutoffs'][
+		work.metadata.meta[sn]['cation']]
+	#! suffixes need sorted so we hardcode here
+	suffixes = ['gro','xtc']
+	if False:
+		structure,trajectory = [os.path.join(work.postdir,
+			'%s.%s'%(data.extras[sn]['slice_path'],j)) for j in suffixes]
+	structure,trajectory = [os.path.join(work.postdir,
+		'%s'%(kwargs[j])) for j in ['structure','trajectory']]
+	uni = MDAnalysis.Universe(structure,trajectory)
+
+	from calcs.codes.fetch_coordinates import fetch_coordinates_subject_target
+	fetch_coordinates_subject_target
+	lipid_sel = ' or '.join('resname %s'%r for r in lipid_resnames)
+	# requires variables/selectors/cations in the metadata
+	cation_sel = work.metadata.variables['selectors']['cations']
+
+	#! this section and the one in contacts.py needs to be more modular
+	#! faking the kwargs
+	kwargs = dict(subject=cation_sel,object=lipid_sel,
+		structure=structure,trajectory=trajectory)
+	#!!! copied from contacts.py but this is too clumsy
+	# get coordinates from the hook
+	default_fetch_coordinates = {
+		'import_target':'codes/fetch_coordinates.py',
+		'function':'fetch_coordinates_subject_target'}
+	fetch_coordinates = kwargs.get(
+		'fetch_coordinates',default_fetch_coordinates)
+	# hooks get the same arguments as compute functions
+	coordinates = HookHandler(meta=kwargs,**fetch_coordinates).solve
+	nframes = coordinates['nframes']
+	vecs = coordinates['vecs']
+	subject = coordinates['uni_selections']['subject']
+	target = coordinates['uni_selections']['target']
+	times = coordinates['times']
+
+	from calcs.contacts import contacts_framewise
+	coords_target = coordinates['coordinates_by_selection']['target']
+	coords_subject = coordinates['coordinates_by_selection']['subject']
+	compute_function = contacts_framewise
+	out_args = {'distance_cutoff':distance_cutoff}
+	looper = [dict(fr=fr,target=coords_target[fr],subject=coords_subject[fr],
+		vec=vecs[fr],**out_args) for fr in range(nframes)]
+	# incoming has atomwise subjects/targets lists for those within cutoff
+	incoming = basic_compute_loop(compute_function,looper)
+	post[sn] = dict(
+		incoming=incoming,coords_subject=coords_subject,
+		subject=subject,target=target,times=times,
+		vecs=vecs,nframes=nframes)
+
+	#! previously this was the postprocess function
+
 	mn_top = 0 #! hardcoded
-	data.set('lipid_abstractor')
-	dat_abs = data.this[sn]
-	data.set('lipid_mesh')
-	dat = data.this[sn]
+	if False:
+		data.set('lipid_abstractor')
+		dat_abs = data.this[sn]
+		data.set('lipid_mesh')
+		dat = data.this[sn]
+	dat = kwargs_incoming['upstream']['lipid_mesh']
+	dat_abs = kwargs_incoming['upstream']['lipid_abstractor']
 	imono = dat['monolayer_indices']
 	resnames = dat['resnames']
 	resids_all = dat_abs['resids']
@@ -234,202 +328,35 @@ def postprocess(sn):
 		ind_mesh_to_mono[np.where(imono==mn)] = \
 			np.arange(len(np.where(imono==mn)[0]))
 	mn = mn_top
-	looper = [dict(mn=mn_top,fr=fr) for fr in range(post[sn]['nframes'])[:10]]
+	looper = [dict(mn=mn_top,fr=fr) for fr in range(post[sn]['nframes'])]
 	incoming = basic_compute_loop(compute_cluster_network,
 		looper=looper,n_jobs=4,run_parallel=False)
-	return incoming
 
-#@loader
-def load():
-	work = WorkSpace(analysis=True)
-	data = work.plotload(plotname='ptdins_percolate')
-	sns = work.sns()[::-1]
-
-	#! running this block in the loop causes failures of some kind
-	# custom parameters. fetch_coordinates clones automacs
-	#! need a way of sync'ing automacs if there are changes?
-	from calcs.codes.fetch_coordinates import get_lipid_resnames
-	lipid_resnames = get_lipid_resnames(work)
-
-	post = {}
-	for sn in sns:
-
-		distance_cutoff = work.metadata.variables['hydration_cutoffs'][
-			work.metadata.meta[sn]['cation']]
-
-		#! suffixes need sorted so we hardcode here
-		suffixes = ['gro','xtc']
-		structure,trajectory = [os.path.join(work.postdir,
-			'%s.%s'%(data.extras[sn]['slice_path'],j)) for j in suffixes]
-		uni = MDAnalysis.Universe(structure,trajectory)
-
-		from calcs.codes.fetch_coordinates import fetch_coordinates_subject_target
-		fetch_coordinates_subject_target
-		lipid_sel = ' or '.join('resname %s'%r for r in lipid_resnames)
-		# requires variables/selectors/cations in the metadata
-		cation_sel = work.metadata.variables['selectors']['cations']
-
-		#! this section and the one in contacts.py needs to be more modular
-		#! faking the kwargs
-		kwargs = dict(subject=cation_sel,object=lipid_sel,
-			structure=structure,trajectory=trajectory)
-		#!!! copied from contacts.py but this is too clumsy
-		# get coordinates from the hook
-		default_fetch_coordinates = {
-			'import_target':'codes/fetch_coordinates.py',
-			'function':'fetch_coordinates_subject_target'}
-		fetch_coordinates = kwargs.get(
-			'fetch_coordinates',default_fetch_coordinates)
-		# hooks get the same arguments as compute functions
-		coordinates = HookHandler(meta=kwargs,**fetch_coordinates).solve
-		nframes = coordinates['nframes']
-		vecs = coordinates['vecs']
-		subject = coordinates['uni_selections']['subject']
-		target = coordinates['uni_selections']['target']
-		times = coordinates['times']
-
-		from calcs.contacts import contacts_framewise
-		coords_target = coordinates['coordinates_by_selection']['target']
-		coords_subject = coordinates['coordinates_by_selection']['subject']
-		compute_function = contacts_framewise
-		out_args = {'distance_cutoff':distance_cutoff}
-		looper = [dict(fr=fr,target=coords_target[fr],subject=coords_subject[fr],
-			vec=vecs[fr],**out_args) for fr in range(nframes)]
-		# incoming has atomwise subjects/targets lists for those within cutoff
-		incoming = basic_compute_loop(compute_function,looper)
-		post[sn] = dict(
-			incoming=incoming,coords_subject=coords_subject,
-			subject=subject,target=target,times=times,
-			vecs=vecs,nframes=nframes)
-
-def clusters_to_radius_gyration(cluster_object):
-	"""
-	Compute radius of gyration for clusters in a single cluster object.
-	"""
-	pts = cluster_object['points_reduced_lipids']
-	edges = cluster_object['edges_reduced_lipids']
-	clusters = cluster_object['clusters_lipids']
-	reindex = cluster_object['lipids_reindex']
-	clusters_this = clusters[reindex]
-	clusters_inds = np.unique(clusters_this)
-	pts_grouped = [pts[np.where(clusters_this==i)][:,:2] for i in clusters_inds]
-	rgs = [
-		np.sqrt(np.sum(np.linalg.norm(this-this.mean(axis=0),axis=1)**2))
-		for this in pts_grouped]
-	return np.array(rgs)
-
-@loader
-def load():
-	work = WorkSpace(analysis=True)
-	data = work.plotload(plotname='ptdins_percolate')
-	sns = work.sns()[::-1]
-	#! running this block in the loop causes failures of some kind
-	# custom parameters. fetch_coordinates clones automacs
-	#! need a way of sync'ing automacs if there are changes?
-	from calcs.codes.fetch_coordinates import get_lipid_resnames
-	lipid_resnames = get_lipid_resnames(work)
-
-if __name__=='__main__':
-
-	#! now we precompute this stuff. when we made ptdins_bond_graphs_calc.py we turned off the loader and turned off this part. we also added the new calculation to the load section
 	if False:
+
 		# compute clusters
 		for snum,sn in enumerate(sns):
 			if 'cluster_results' not in post[sn]:
 				print('status computing clusters for %s %d/%d'%(sn,snum+1,len(sns)))
 				post[sn]['cluster_results'] = postprocess(sn)
 			if 'cluster_radius_gyration' not in post[sn]:
-				looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
 				post[sn]['cluster_radius_gyration'] = basic_compute_loop(
 					clusters_to_radius_gyration,looper=looper,run_parallel=False)
+	post[sn]['cluster_results'] = incoming
+	looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
+	post[sn]['cluster_radius_gyration'] = basic_compute_loop(
+		clusters_to_radius_gyration,looper=looper,run_parallel=False)
 
-	fig = plt.figure(figsize=(8,8))
-	gs = gridspec.GridSpec(1,1)
-	axes = [plt.subplot(g) for g in gs]
-	ax = axes[0]
-
-	for sn in sns:
-		data.set('lipid_abstractor')
-		dat_abs = data.this[sn]
-		data.set('ptdins_bond_graphs_calc')
-		dat = data.this[sn]
-		nframes = dat_abs['nframes']
-		rgs = np.concatenate([dat['%d__rgs'%fr] for fr in range(nframes)])
-		lev = -1 # rounding level
-		bins = np.arange(0,np.ceil(rgs.max()/10**lev+1)*10**lev,10**lev)
-		counts,_ = np.histogram(rgs,bins=bins)
-		mids = (bins[1:]+bins[:-1])/2.
-		ax.plot(mids,counts)
-	picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
-
-if 0:
-	# figure
-	ax_pad = 0.2
-	zoom_fac = 1.
-	figscale = 10.0
-	figprop = 1.5
-	zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
-	color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
-	fig = plt.figure(figsize=(figscale*figprop,figscale))
-	gs = gridspec.GridSpec(2,3)
-	axes = [plt.subplot(g) for g in gs]
-
-	fr = 0
-	for snum,sn in enumerate(sns):
-		outgoing = post[sn]['cluster_results'][fr]
-
-		title = work.metadata.meta[sn]['ion_label']
-		ax = axes[0+3*snum]
-		ax.set_title('bound cations, '+title)
-		pts,edges = outgoing['pts'],outgoing['edges']
-		# start color calculation
-		cation_color = 'k'
-		cmap_name = 'jet'
-		clusters = outgoing['clusters']
-		n_pivot = outgoing['n_pivot']
-		inds = np.arange(outgoing['n_total']).astype(int)
-		color_inds = np.unique(clusters)
-		np.random.shuffle(color_inds)
-		color_hash = dict([(i,mpl.cm.__dict__[cmap_name](float(ii)/len(color_inds)))
-			for ii,i in enumerate(color_inds)])
-		# the conditional makes the cations red because they are sequentially last
-		color = [color_hash[clusters[i]] 
-			if i<n_pivot else cation_color 
-			for i in inds if clusters[i]!=0]
-		# end color caclulation
-		ax.scatter(*pts[:,:2].T,color=color,s=10)
-		lines = np.array([pts[edges[:,0]][:,:2],
-			pts[edges[:,1]][:,:2]]).transpose((1,0,2))
-		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-		ax.add_collection(lc)		
-
-		#! repetitive with above minus color calculation
-		ax = axes[1+3*snum]
-		ax.set_title('bridged lipids, '+title)
-		#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
-		pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
-		ax.scatter(*pts[:,:2].T,color='k',s=10)
-		lines = np.array([pts[edges[:,0]][:,:2],
-			pts[edges[:,1]][:,:2]]).transpose((1,0,2))
-		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-		ax.add_collection(lc)		
-
-		#! repetitive with above minus color calculation
-		ax = axes[1+3*snum]
-		ax.set_title('bridged lipids, '+title)
-		#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
-		pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
-		ax.scatter(*pts[:,:2].T,color='k',s=10)
-		lines = np.array([pts[edges[:,0]][:,:2],
-			pts[edges[:,1]][:,:2]]).transpose((1,0,2))
-		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-		ax.add_collection(lc)
-
-	# plot formatting
-	if False:
-		for pspec,ax in zip(pspecs,axes):
-			sn = sn=pspec['sn']
-			pspec['func'](ax=ax,sn=sn)
-	zoom_figure(fig,zoom_fac)
-	plt.subplots_adjust(wspace=0.35,hspace=0.35)
-	picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+	# pack
+	attrs,result = {},{}
+	#! save from abstractor
+	attrs['selector'] = kwargs_incoming['upstream']['lipid_abstractor']['selector']
+	attrs['nojumps'] = kwargs_incoming['upstream']['lipid_abstractor']['nojumps']
+	#! package in the dumb way
+	cluster_results_keys = post[sn]['cluster_results'][0].keys()
+	for fr in range(nframes):
+		for key in cluster_results_keys:
+			result['%d__%s'%(fr,key)] = np.array(post[sn]['cluster_results'][fr][key])
+	for fr in range(nframes):
+		result['%d__rgs'%(fr)] = np.array(post[sn]['cluster_radius_gyration'][fr])
+	return result,attrs	
