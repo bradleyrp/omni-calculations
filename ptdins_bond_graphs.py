@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import re
 import MDAnalysis
 import numpy as np
 from omni import WorkSpace
@@ -167,15 +168,68 @@ def compute_cluster_network(fr,mn):
 		# get points in one cluster
 		this_cluster = np.where(clusters==cnum)
 		pts_this = pts_order[this_cluster][:,:2]
-		arg0 = np.zeros(len(pts_this)*2)
+		n_opts = len(pts_this)*2
+		arg0 = np.zeros(n_opts)
+		#! arg0 = np.random.random_integers(-1,1,n_opts)
 		def func(arg):
 			x = pts_this + arg.astype(int).reshape((2,-1)).T*vec
 			return np.sum((x-x.mean(axis=0))**2)
+		# edges in absolute indices
+		edges_this = edges[np.where(np.all([np.in1d(edges[:,i],this_cluster[0]) for i in range(2)],axis=0))] 
+		# convert edges from absolute to relative indices for pts_this
+		ind_abs_to_rel = dict([(j,jj) for jj,j in enumerate(this_cluster[0])])
+		edges_this_rel = np.array([[ind_abs_to_rel[i] for i in j] for j in edges_this])		
+		def func(arg):
+			arg_round = arg.astype(int)
+			pts_new = pts_this + arg_round.reshape((2,-1)).T*vec[:2]
+			return np.sum(pts_new[edges_this_rel].ptp(axis=1)**2)
+		def funcNOPE(arg):
+			pts_new = pts_this + arg.astype(int).reshape((2,-1)).T*vec[:2]
+			return np.sum(pts_new[edges_this_rel].ptp(axis=1)>vec/2.)
+		#! import ipdb;ipdb.set_trace()
+		#ans = scipy.optimize.minimize(fun=func,x0=(arg0,),method='powell')
 		ans = scipy.optimize.minimize(fun=func,x0=(arg0,),method='Powell')
+		#! ans = scipy.optimize.brute(func=func,)
 		shifts = ans.x.astype(int).reshape((2,-1))
+		#check!!!
+		pts_new = pts_this + shifts.T*vec
+		if False and fr==608 and np.any(pts_new[edges_this_rel].ptp(axis=1)>vec/2.):
+			print('failure!')
+			#! import ipdb;ipdb.set_trace()
+		#! demoing a brute force method which is also failing due to size reasons probably
+		if n_opts<32 and False:
+			ans2 = scipy.optimize.brute(func=func,ranges=
+				np.array(list(range(-1,2) for i in range(n_opts))),Ns=n_opts)
+			print(ans2)
+			shifts3 = np.array(ans2).reshape((2,-1))
+			#print('compare')
+			#print(shifts3)
+			#print(shifts)
+			if False: # n cannot be around 14 or things are too big to search brute force
+				print('also')
+				print('n = %d'%(len(pts_this)*2))
+				#!!! alt method takes too much memory
+				combos = np.array(list(itertools.product(range(-1,2),repeat=len(pts_this)*2)))
+				print(combos.shape)
+				tests = np.array([func(np.array(c)) for c in combos])
+				argmin = tests.argmin()
+				print('answer = '+str(combos[argmin]))
 		if (shifts!=0).any():
 			#! no change if you do this mistake: pts_order[this_cluster][:,:2] += shifts.T*vec
 			pts_order[this_cluster,:2] += shifts.T*vec
+		#! check for edges that are too long
+		#print(edges.shape)
+		#print(pts_this.shape)
+		#print(this_cluster[0].shape)
+		edge_dists = pts_order[edges[np.where(np.all([np.in1d(edges[:,i],this_cluster[0]) 
+			for i in range(2)],axis=0))]].ptp(axis=1)[:,:2]
+		#! realized at this point why not minimize total edge distance?
+		if False and not np.all(edge_dists<vec/2.):
+			print('NOPE!')
+			import ipdb;ipdb.set_trace()
+		#print(edge_dists)
+		#import ipdb;ipdb.set_trace()
+		
 
 	# collapse borders by finding all cations bound to at least two lipids to make a link
 	pts_red = pts_order[:len(left_inds)]
@@ -234,12 +288,12 @@ def postprocess(sn):
 		ind_mesh_to_mono[np.where(imono==mn)] = \
 			np.arange(len(np.where(imono==mn)[0]))
 	mn = mn_top
-	looper = [dict(mn=mn_top,fr=fr) for fr in range(post[sn]['nframes'])[:10]]
+	looper = [dict(mn=mn_top,fr=fr) for fr in range(post[sn]['nframes'])[600:600+10]]
 	incoming = basic_compute_loop(compute_cluster_network,
 		looper=looper,n_jobs=4,run_parallel=False)
 	return incoming
 
-#@loader
+@loader
 def load():
 	work = WorkSpace(analysis=True)
 	data = work.plotload(plotname='ptdins_percolate')
@@ -296,7 +350,7 @@ def load():
 		looper = [dict(fr=fr,target=coords_target[fr],subject=coords_subject[fr],
 			vec=vecs[fr],**out_args) for fr in range(nframes)]
 		# incoming has atomwise subjects/targets lists for those within cutoff
-		incoming = basic_compute_loop(compute_function,looper)
+		incoming = basic_compute_loop(compute_function,looper,run_parallel=False)
 		post[sn] = dict(
 			incoming=incoming,coords_subject=coords_subject,
 			subject=subject,target=target,times=times,
@@ -318,11 +372,11 @@ def clusters_to_radius_gyration(cluster_object):
 		for this in pts_grouped]
 	return np.array(rgs)
 
-@loader
+#@loader
 def load():
 	work = WorkSpace(analysis=True)
 	data = work.plotload(plotname='ptdins_percolate')
-	sns = work.sns()[::-1]
+	sns = work.sns()[::-1] # no need to go backwards
 	#! running this block in the loop causes failures of some kind
 	# custom parameters. fetch_coordinates clones automacs
 	#! need a way of sync'ing automacs if there are changes?
@@ -332,54 +386,87 @@ def load():
 if __name__=='__main__':
 
 	#! now we precompute this stuff. when we made ptdins_bond_graphs_calc.py we turned off the loader and turned off this part. we also added the new calculation to the load section
-	if False:
+	if 1:
+		redo = 1
 		# compute clusters
 		for snum,sn in enumerate(sns):
-			if 'cluster_results' not in post[sn]:
+			if 'cluster_results' not in post[sn] or redo:
 				print('status computing clusters for %s %d/%d'%(sn,snum+1,len(sns)))
 				post[sn]['cluster_results'] = postprocess(sn)
-			if 'cluster_radius_gyration' not in post[sn]:
+			if 'cluster_radius_gyration' not in post[sn] or redo:
 				looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
 				post[sn]['cluster_radius_gyration'] = basic_compute_loop(
 					clusters_to_radius_gyration,looper=looper,run_parallel=False)
+		post2 = post
 
-	fig = plt.figure(figsize=(8,8))
-	gs = gridspec.GridSpec(1,1)
-	axes = [plt.subplot(g) for g in gs]
-	ax = axes[0]
+	if 0:
 
-	for sn in sns:
-		data.set('lipid_abstractor')
-		dat_abs = data.this[sn]
-		data.set('ptdins_bond_graphs_calc')
-		dat = data.this[sn]
-		nframes = dat_abs['nframes']
-		rgs = np.concatenate([dat['%d__rgs'%fr] for fr in range(nframes)])
-		lev = -1 # rounding level
-		bins = np.arange(0,np.ceil(rgs.max()/10**lev+1)*10**lev,10**lev)
-		counts,_ = np.histogram(rgs,bins=bins)
-		mids = (bins[1:]+bins[:-1])/2.
-		ax.plot(mids,counts)
-	picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+		fig = plt.figure(figsize=(8,8))
+		gs = gridspec.GridSpec(1,1)
+		axes = [plt.subplot(g) for g in gs]
+		ax = axes[0]
+		post_rgs = {}
+		for sn in sns:
+			data.set('lipid_abstractor')
+			dat_abs = data.this[sn]
+			data.set('ptdins_bond_graphs_calc')
+			dat = data.this[sn]
+			nframes = dat_abs['nframes']
+			rgs = np.concatenate([dat['%d__rgs'%fr] for fr in range(nframes)])
+			post_rgs[sn] = rgs
+			lev = -1 # rounding level
+			bins = np.arange(0,np.ceil(rgs.max()/10**lev+1)*10**lev,10**lev)
+			counts,_ = np.histogram(rgs,bins=bins)
+			mids = (bins[1:]+bins[:-1])/2.
+			ax.plot(mids,counts)
+		picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
 
-if 0:
+
+	# reformulate the post
+	if 0:
+		if 'post' not in globals():
+			post2 = {}
+			for sn in sns:
+				data.set('ptdins_bond_graphs_calc')
+				keys = [re.match('^0__(.+)$',i).group(1) for i in dat if re.match('^0__',i)]
+				dat = data.this[sn]
+				data.set('lipid_abstractor')
+				dat_abs = data.this[sn]
+				nframes = dat_abs['nframes']
+				post2[sn] = dict(cluster_results=[{k:dat['%d__%s'%(fr,k)] for k in keys} for fr in range(nframes)])
+
+	# finding the largest cluster to see if something is weird
+	if 0:
+		sn = 'membrane-v532'
+		rgs = post_rgs[sn]
+		n_clusters_per_frame = [np.unique(post[sn]['cluster_results'][fr]['clusters_lipids']).shape[0]-1 for fr in range(nframes)]
+		max_rg_ind = rgs.argmax()
+		cluster_ind_to_fr = np.concatenate([np.ones(i)*ii for ii,i in enumerate(n_clusters_per_frame)]).astype(int)
+		fr = cluster_ind_to_fr[max_rg_ind]
+
+	#if 0:
+
+	fr = 608-600
+	fr = 607-600
+
 	# figure
 	ax_pad = 0.2
 	zoom_fac = 1.
 	figscale = 10.0
-	figprop = 1.5
+	ncols = 2
+	figprop = 0.5*ncols
 	zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
 	color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
 	fig = plt.figure(figsize=(figscale*figprop,figscale))
-	gs = gridspec.GridSpec(2,3)
+	gs = gridspec.GridSpec(2,2)
 	axes = [plt.subplot(g) for g in gs]
 
-	fr = 0
+	#! fr = 0 # see above
 	for snum,sn in enumerate(sns):
 		outgoing = post[sn]['cluster_results'][fr]
 
 		title = work.metadata.meta[sn]['ion_label']
-		ax = axes[0+3*snum]
+		ax = axes[0+ncols*snum]
 		ax.set_title('bound cations, '+title)
 		pts,edges = outgoing['pts'],outgoing['edges']
 		# start color calculation
@@ -404,7 +491,7 @@ if 0:
 		ax.add_collection(lc)		
 
 		#! repetitive with above minus color calculation
-		ax = axes[1+3*snum]
+		ax = axes[1+ncols*snum]
 		ax.set_title('bridged lipids, '+title)
 		#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
 		pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
@@ -415,7 +502,7 @@ if 0:
 		ax.add_collection(lc)		
 
 		#! repetitive with above minus color calculation
-		ax = axes[1+3*snum]
+		ax = axes[1+ncols*snum]
 		ax.set_title('bridged lipids, '+title)
 		#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
 		pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
