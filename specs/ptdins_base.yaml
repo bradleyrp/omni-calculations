@@ -167,6 +167,7 @@ variables:
     MG: 2.3
     Cal: 2.6
     K: 3.0
+    Na,Cal: 3.05
   names:
     # short is only used in lipid_lipid_bonds_analysis
     short:
@@ -497,8 +498,29 @@ collections:
   best_compare:
     - membrane-v531
     - membrane-v532
-  cursor:
+  cursorXXX:
     - membrane-v566
   cursor:
     - membrane-v531
     - membrane-v532
+  cursorXXX:
+    - membrane-v509
+    - membrane-v510
+    - membrane-v511
+    - membrane-v530
+    - membrane-v531
+    - membrane-v532
+    - membrane-v533
+    - membrane-v534
+    - membrane-v514
+    - membrane-v515
+    - membrane-v536
+    - membrane-v538
+    - membrane-v542
+    - membrane-v543
+    - membrane-v599
+    - membrane-v565 
+    - membrane-v566
+    - membrane-v564
+    - membrane-v563
+    - membrane-v562

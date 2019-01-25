@@ -70,6 +70,21 @@ def edges_to_clusters(n_pts,edges):
 		clusters[np.where(clusters_original==v)] = k
 	return clusters
 
+def unbounded_center(pts,vec):
+	"""Get the centroid (not mass weighted) for points on an unbounded (periodic) plane."""
+	# via https://en.wikipedia.org/wiki/Center_of_mass#Systems_with_periodic_boundary_conditions
+	com = []
+	for d in range(2):
+		remap = pts[:,d]/vec[d]*2*np.pi
+		# contra the wiki use no negative
+		com_this = np.arctan2(np.mean(np.sin(remap)),np.mean(np.cos(remap)))/2/np.pi*vec[d]
+		# however we have to rewrap the points to get the absolute com 
+		#   because the result above can be negative
+		com.append(com_this)
+	com = np.array(com)
+	com += (com<0)*vec-(com>vec)*vec
+	return com
+
 def compute_cluster_network(fr,mn):
 	"""
 	Extract a lipid-cation-lipid bond network and reduce it to a network of lipid-lipid bonds mediated
@@ -161,6 +176,29 @@ def compute_cluster_network(fr,mn):
 
 	# move points across periodic boundaries to minimize their second moment
 	vec = vecs[fr][:2]
+
+
+	#! deprecated in favor of a much more elegant method
+	if False:
+
+		clusters_u = np.unique(clusters)
+		for cc,cnum in enumerate(clusters_u):
+			# ignore the zero group which are singletons
+			if cnum==0: continue
+			# get points in one cluster
+			this_cluster = np.where(clusters==cnum)
+			pts_this = pts_order[this_cluster][:,:2]
+			arg0 = np.zeros(len(pts_this)*2)
+			def func(arg):
+				x = pts_this + arg.astype(int).reshape((2,-1)).T*vec
+				return np.sum((x-x.mean(axis=0))**2)
+			ans = scipy.optimize.minimize(fun=func,x0=(arg0,),method='Powell')
+			shifts = ans.x.astype(int).reshape((2,-1))
+			if (shifts!=0).any():
+				#! no change if you do this mistake: pts_order[this_cluster][:,:2] += shifts.T*vec
+				pts_order[this_cluster,:2] += shifts.T*vec
+
+	#! new method here
 	clusters_u = np.unique(clusters)
 	for cc,cnum in enumerate(clusters_u):
 		# ignore the zero group which are singletons
@@ -168,15 +206,14 @@ def compute_cluster_network(fr,mn):
 		# get points in one cluster
 		this_cluster = np.where(clusters==cnum)
 		pts_this = pts_order[this_cluster][:,:2]
-		arg0 = np.zeros(len(pts_this)*2)
-		def func(arg):
-			x = pts_this + arg.astype(int).reshape((2,-1)).T*vec
-			return np.sum((x-x.mean(axis=0))**2)
-		ans = scipy.optimize.minimize(fun=func,x0=(arg0,),method='Powell')
-		shifts = ans.x.astype(int).reshape((2,-1))
-		if (shifts!=0).any():
-			#! no change if you do this mistake: pts_order[this_cluster][:,:2] += shifts.T*vec
-			pts_order[this_cluster,:2] += shifts.T*vec
+		n_opts = len(pts_this)*2
+		cog = unbounded_center(pts_this,vec)
+		# minimize distances to the cog for all points
+		if np.any(np.abs((pts_this-cog))>vec/2):
+			pts_this += ((pts_this-cog)>vec/2)*vec*-1
+			pts_this += ((pts_this-cog)<(-vec/2))*vec
+			# save the result
+			pts_order[this_cluster,:2] = pts_this
 
 	# collapse borders by finding all cations bound to at least two lipids to make a link
 	pts_red = pts_order[:len(left_inds)]

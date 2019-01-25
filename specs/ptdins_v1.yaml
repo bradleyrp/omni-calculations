@@ -80,4 +80,5 @@ plots:
         upstream: 
           lipid_abstractor:
             selector: lipid_com
+      # this shit is broke so using data2 = work.plotload(plotname='ptdins_bond_graphs_calc')
       ptdins_bond_graphs_calc: {}

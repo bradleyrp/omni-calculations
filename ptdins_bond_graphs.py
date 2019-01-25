@@ -177,7 +177,7 @@ def compute_cluster_network(fr,mn):
 	# move points across periodic boundaries to minimize their second moment
 	vec = vecs[fr][:2]
 	clusters_u = np.unique(clusters)
-	cogs = []
+	cogs = [] #! debugging
 	for cc,cnum in enumerate(clusters_u):
 		# ignore the zero group which are singletons
 		if cnum==0: continue
@@ -210,15 +210,13 @@ def compute_cluster_network(fr,mn):
 			com += (com<0)*vec-(com>vec)*vec
 		
 		cog = unbounded_center(pts_this,vec)
-		cogs.append(cog)
+		cogs.append(cog) #! debugging only
 		# minimize distances to the cog for all points
 		if np.any(np.abs((pts_this-cog))>vec/2):
 			pts_this += ((pts_this-cog)>vec/2)*vec*-1
 			pts_this += ((pts_this-cog)<(-vec/2))*vec
 			# save the result
-			print('saving')
 			pts_order[this_cluster,:2] = pts_this
-			#! import ipdb;ipdb.set_trace()
 
 	# collapse borders by finding all cations bound to at least two lipids to make a link
 	pts_red = pts_order[:len(left_inds)]
@@ -365,8 +363,19 @@ def clusters_to_radius_gyration(cluster_object):
 		for this in pts_grouped]
 	return np.array(rgs)
 
+def weird_count(sn,fr):
+	outgoing = post[sn]['cluster_results'][fr]
+	pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
+	lipids_these = np.where(post[sn]['cluster_results'][fr]['clusters_lipids']>0)[0]
+	reindex = np.zeros(len(pts)).astype(int)
+	reindex[np.unique(outgoing['edges_reduced_lipids'])] = np.arange(len(lipids_these))
+	# corresponding cluster index for this frame is
+	cinds = post[sn]['cluster_results'][fr]['clusters_lipids'][lipids_these]
+	bonds = resnames[lipids_these][reindex[edges]]
+	return dict(bonds=bonds,cinds=cinds)
+
 # CON-to-new this loader works when you bring in new data
-#@loader 
+#! @loader 
 def load():
 	work = WorkSpace(analysis=True)
 	data = work.plotload(plotname='ptdins_percolate')
@@ -379,120 +388,220 @@ def load():
 
 if __name__=='__main__':
 
-	global frameslice
-	frameslice = (150,160)
-	redo = 1
-	# compute clusters
-	for snum,sn in enumerate(sns):
-		if 'cluster_results' not in post[sn] or redo:
-			print('status computing clusters for %s %d/%d'%(sn,snum+1,len(sns)))
-			post[sn]['cluster_results'] = postprocess(sn)
-		if 'cluster_radius_gyration' not in post[sn] or redo:
-			looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
-			post[sn]['cluster_radius_gyration'] = basic_compute_loop(
-				clusters_to_radius_gyration,looper=looper,run_parallel=False)
-
-	# CON-to-new rgs compute
-	if 0:
-		fig = plt.figure(figsize=(8,8))
-		gs = gridspec.GridSpec(1,1)
-		axes = [plt.subplot(g) for g in gs]
-		ax = axes[0]
-		post_rgs = {}
-		for sn in sns:
-			data.set('lipid_abstractor')
-			dat_abs = data.this[sn]
-			data.set('ptdins_bond_graphs_calc')
-			dat = data.this[sn]
-			nframes = dat_abs['nframes']
-			rgs = np.concatenate([dat['%d__rgs'%fr] for fr in range(nframes)])
-			post_rgs[sn] = rgs
-			lev = -1 # rounding level
-			bins = np.arange(0,np.ceil(rgs.max()/10**lev+1)*10**lev,10**lev)
-			counts,_ = np.histogram(rgs,bins=bins)
-			mids = (bins[1:]+bins[:-1])/2.
-			ax.plot(mids,counts)
-		picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
-	# CON-to-new reformulate the post
-	if 0:
-		if 'post' not in globals():
-			post2 = {}
-			for sn in sns:
-				data.set('ptdins_bond_graphs_calc')
-				keys = [re.match('^0__(.+)$',i).group(1) for i in dat if re.match('^0__',i)]
-				dat = data.this[sn]
-				data.set('lipid_abstractor')
-				dat_abs = data.this[sn]
-				nframes = dat_abs['nframes']
-				post2[sn] = dict(cluster_results=[{k:dat['%d__%s'%(fr,k)] for k in keys} for fr in range(nframes)])
-	# CON-to-new finding the largest cluster to see if something is weird
-	if 0:
-		sn = 'membrane-v532'
-		rgs = post_rgs[sn]
-		n_clusters_per_frame = [np.unique(post[sn]['cluster_results'][fr]['clusters_lipids']).shape[0]-1 for fr in range(nframes)]
-		max_rg_ind = rgs.argmax()
-		cluster_ind_to_fr = np.concatenate([np.ones(i)*ii for ii,i in enumerate(n_clusters_per_frame)]).astype(int)
-		fr = cluster_ind_to_fr[max_rg_ind]
-
-	#if 0:
-
-	fr = 152
-	fr = fr-frameslice[0]
-	# figure
-	ax_pad = 0.2
-	zoom_fac = 1.
-	figscale = 10.0
-	ncols = 2
-	figprop = 0.5*ncols
-	zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
-	color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
-	fig = plt.figure(figsize=(figscale*figprop,figscale))
-	gs = gridspec.GridSpec(2,2)
-	axes = [plt.subplot(g) for g in gs]
-	for snum,sn in enumerate(sns):
-		outgoing = post[sn]['cluster_results'][fr]
-		title = work.metadata.meta[sn]['ion_label']
-		ax = axes[0+ncols*snum]
-		ax.set_title('bound cations, '+title)
-		pts,edges = outgoing['pts'],outgoing['edges']
-		# start color calculation
-		cation_color = 'k'
-		cmap_name = 'jet'
-		clusters = outgoing['clusters']
-		n_pivot = outgoing['n_pivot']
-		inds = np.arange(outgoing['n_total']).astype(int)
-		color_inds = np.unique(clusters)
-		np.random.shuffle(color_inds)
-		color_hash = dict([(i,mpl.cm.__dict__[cmap_name](float(ii)/len(color_inds)))
-			for ii,i in enumerate(color_inds)])
-		# the conditional makes the cations red because they are sequentially last
-		color = [color_hash[clusters[i]] 
-			if i<n_pivot else cation_color 
-			for i in inds if clusters[i]!=0]
-		# end color caclulation
-		ax.scatter(*pts[:,:2].T,color=color,s=10)
-		#! cogs=outgoing['cogs'];ax.scatter(*np.array(cogs).T,color='r',s=20)
-		lines = np.array([pts[edges[:,0]][:,:2],
-			pts[edges[:,1]][:,:2]]).transpose((1,0,2))
-		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-		ax.add_collection(lc)		
+	if 1:
+		if 'post' not in globals(): post = {}
+		global frameslice
+		frameslice = (770,790)
 		
-		#! repetitive with above minus color calculation
-		ax = axes[1+ncols*snum]
-		ax.set_title('bridged lipids, '+title)
-		#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
+		redo = 1
+		# compute clusters
+		for snum,sn in enumerate(sns):
+			if 'cluster_results' not in post[sn] or redo:
+				print('status computing clusters for %s %d/%d'%(sn,snum+1,len(sns)))
+				post[sn]['cluster_results'] = postprocess(sn)
+			if 'cluster_radius_gyration' not in post[sn] or redo:
+				looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
+				post[sn]['cluster_radius_gyration'] = basic_compute_loop(
+					clusters_to_radius_gyration,looper=looper,run_parallel=False)
+			if 'cluster_bond_propensities' not in post[sn] or redo:
+				looper = [dict(fr=fr,sn=sn) for fr in range(len(post[sn]['cluster_results']))]
+				post[sn]['cluster_bond_propensities'] = basic_compute_loop(
+					weird_count,looper=looper,run_parallel=False)
+		# CON-to-new reformulate the post
+		if 1:
+			if 'post' not in globals():
+				post2 = {}
+				for sn in sns:
+					data.set('ptdins_bond_graphs_calc')
+					keys = [re.match('^0__(.+)$',i).group(1) for i in dat if re.match('^0__',i)]
+					dat = data.this[sn]
+					data.set('lipid_abstractor')
+					dat_abs = data.this[sn]
+					nframes = dat_abs['nframes']
+					post2[sn] = dict(cluster_results=[{k:dat['%d__%s'%(fr,k)] for k in keys} 
+						for fr in range(nframes)])
+		# CON-to-new reformulate the post
+		if 1:
+			if 'data2' not in globals():
+				data2 = work.plotload(plotname='ptdins_bond_graphs_calc')
+				post_rgs = {}
+				for snum,sn in enumerate(sns):
+					data.set('lipid_abstractor')
+					dat_abs = data.this[sn]
+					data2.set('ptdins_bond_graphs_calc')
+					dat = data2.this[sn]
+					nframes = dat_abs['nframes']
+					rgs = np.concatenate([dat['%d__rgs'%fr] for fr in range(nframes)])
+					post_rgs[sn] = rgs
+		# CON-to-new
+		if 1:
+			mn_top = 0
+			cluster_contents ={}
+			for sn in sns:
+				imono = data.this[sn]['monolayer_indices']
+				data.set('lipid_abstractor')
+				resnames = data.this[sn]['resnames'][imono==mn_top]
+				resnames_int = np.zeros(len(resnames)).astype(int)
+				resname_to_int = dict([(j,i) for i,j in enumerate(np.unique(resnames))])
+				for resname in resname_to_int:
+					resnames_int[np.where(resnames==resname)] = resname_to_int[resname]
+				rgs = post_rgs[sn]
+				counts_resnames = np.zeros((len(rgs),len(resname_to_int)))
+				n_resnames = np.unique(resnames)
+				counter = 0
+				for fr in range(nframes):
+					clusters_this = data2.this[sn]['%d__clusters_lipids'%fr]
+					resnames_this = [resnames_int[np.where(clusters_this==i)[0]] 
+						for i in np.unique(clusters_this)[1:]]
+					for r in resnames_this:
+						this,counts = np.unique(r,return_counts=True)
+						counts_resnames[counter][this] = counts
+						counter += 1
+				cluster_sizes = counts_resnames.sum(axis=1)
+				#! i=2;rgs[np.all((rgs<bins[i],rgs>=bins[i-1]),axis=0)]
+				cluster_contents[sn] = dict(cluster_sizes=cluster_sizes,counts_resnames=counts_resnames)
+		# CON-to-new finding the largest cluster to see if something is weird
+		if 1:
+			cluster_ind_to_fr = {}
+			for sn in sns:
+				rgs = post_rgs[sn]
+				n_clusters_per_frame = [np.unique(data2.this[sn]['%d__clusters_lipids'%fr]).shape[0]-1 
+				for fr in range(nframes)]
+				max_rg_ind = rgs.argmax()
+				cluster_ind_to_fr[sn] = np.concatenate([np.ones(i)*ii 
+					for ii,i in enumerate(n_clusters_per_frame)]).astype(int)
+				# 775. adjust frameslice above to render it with the code below
+				fr = cluster_ind_to_fr[sn][max_rg_ind]
+		# CON-to-new rgs compute
+		if 1:
+			colors = {b'DOPE':'gray',b'DOPS':'blue',b'PI2P':'red'}
+			#! broken! so we have to do this
+			fig = plt.figure(figsize=(8,8))
+			gs = gridspec.GridSpec(1,2,width_ratios=[5,1])
+			axes = [plt.subplot(g) for g in gs]
+			for snum,sn in enumerate(sns):
+				data.set('lipid_abstractor')
+				dat = data.this[sn]
+				nframes = dat['nframes']
+				ax = axes[snum]
+				rgs = post_rgs[sn]
+				lev = -1 # rounding level
+				bins = np.arange(0,np.ceil(rgs.max()/10**lev+1)*10**lev,10**lev)
+				counts,_ = np.histogram(rgs,bins=bins)
+				mids = (bins[1:]+bins[:-1])/2.
+				#! ax.plot(mids,counts)
+				#! ax.bar(mids,counts)
+				# plot cluster lipid counts instead
+				cluster_sizes = cluster_contents[sn]['cluster_sizes']
+				counts_resnames = cluster_contents[sn]['counts_resnames']
+				bins = np.arange(0,cluster_sizes.max()+2)-0.5
+				counts,_ = np.histogram(cluster_sizes,bins=bins)
+				mids = (bins[1:]+bins[:-1])/2.
+				#! you can plot the total count here
+				#! ax.bar(mids,counts)
+				# breaking down each bar by the lipid type
+				# prepare a stacked bar plot
+				counts_mean = np.array([counts_resnames[np.where(cluster_sizes==i)] for i in mids])
+				#! need resname_to_int
+				counts_mean = np.array([j.mean(axis=0) if len(j)>0 else np.zeros(len(resname_to_int)) for j in counts_mean]).T
+				#!!!
+				weighted = (counts*counts_mean/mids)
+				weighted[np.isnan(weighted)] = 0
+				#! no! not a cumulative sum! weighted = np.cumsum(weighted,axis=0)/nframes
+				weighted = weighted/nframes
+				base = np.zeros((len(weighted.T)))
+				for rnum,row in enumerate(weighted):
+					ax.bar(mids,row,bottom=base,width=1.0,
+						color=colors[dict([(j,i) for i,j in resname_to_int.items()])[rnum]])
+					base += row
+				ax.set_title(work.metadata.meta[sn]['ion_label'])
+				#! ax.set_ylim((0,1.05*weighted.max()))
+				ax.set_xlabel('lipids in a cluster')
+				ax.set_ylabel(r'$\langle N_{clusters} \rangle$')
+				ax.set_xlim((ax.set_xlim(2-0.5,mids[2:].ptp()+2.0+0.5)))
+				#! checking that the number of clusters is right
+				#! weighted.sum(axis=0).sum() # this is the sum of the histogram and should be the average clusters per frame, 45.8 for v532
+			axes[1].set_ylim(axes[0].get_ylim())
+			picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+
+	if 0:
+		colors = {b'DOPE':'gray',b'DOPS':'blue',b'PI2P':'red'}
+		fr = 775
+		fr = fr-frameslice[0]
+		# figure
+		ax_pad = 0.2
+		zoom_fac = 1.
+		figscale = 10.0
+		ncols = 2
+		figprop = 0.5*ncols
+		zorder = {'pbc':0,'lines':1,'lipids':2,'cations':3}
+		color_lipids = {'DOPE':'b','DOPS':'m','PI2P':'r','DOPC':'g','POPC':'g'}
+		fig = plt.figure(figsize=(figscale*figprop,figscale))
+		gs = gridspec.GridSpec(2,2)
+		axes = [plt.subplot(g) for g in gs]
+		for snum,sn in enumerate(sns):
+			outgoing = post[sn]['cluster_results'][fr]
+			title = work.metadata.meta[sn]['ion_label']
+			ax = axes[0+ncols*snum]
+			ax.set_title('bound cations, '+title)
+			pts,edges = outgoing['pts'],outgoing['edges']
+			# start color calculation
+			cation_color = 'k'
+			cmap_name = 'jet'
+			clusters = outgoing['clusters']
+			n_pivot = outgoing['n_pivot']
+			inds = np.arange(outgoing['n_total']).astype(int)
+			color_inds = np.unique(clusters)
+			np.random.shuffle(color_inds)
+			color_hash = dict([(i,mpl.cm.__dict__[cmap_name](float(ii)/len(color_inds)))
+				for ii,i in enumerate(color_inds)])
+			# the conditional makes the cations red because they are sequentially last
+			color = [color_hash[clusters[i]] 
+				if i<n_pivot else cation_color 
+				for i in inds if clusters[i]!=0]
+			# end color caclulation
+			ax.scatter(*pts[:,:2].T,color=color,s=10)
+			#! cogs=outgoing['cogs'];ax.scatter(*np.array(cogs).T,color='r',s=20)
+			lines = np.array([pts[edges[:,0]][:,:2],
+				pts[edges[:,1]][:,:2]]).transpose((1,0,2))
+			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
+			ax.add_collection(lc)		
+			
+			#! repetitive with above minus color calculation
+			ax = axes[1+ncols*snum]
+			ax.set_title('bridged lipids, '+title)
+			#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
+			pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
+			#! pts = outgoing['pts_order']
+			#! trying to get colors here
+			lipids_these = np.where(post[sn]['cluster_results'][fr]['clusters_lipids']>0)[0]
+			pts_these = pts[np.unique(outgoing['edges_reduced_lipids'])]
+			#! ax.scatter(*pts[:,:2].T,color='k',s=10)
+			imono = data.this[sn]['monolayer_indices']
+			data.set('lipid_abstractor')
+			resnames = data.this[sn]['resnames'][imono==mn_top]
+			colors_this = [colors[resnames[i]] for i in lipids_these]
+			ax.scatter(*pts_these[:,:2].T,color=colors_this,s=10)
+			lines = np.array([pts[edges[:,0]][:,:2],
+				pts[edges[:,1]][:,:2]]).transpose((1,0,2))
+			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
+			ax.add_collection(lc)		
+		# plot formatting
+		if False:
+			for pspec,ax in zip(pspecs,axes):
+				sn = sn=pspec['sn']
+				pspec['func'](ax=ax,sn=sn)
+		zoom_figure(fig,zoom_fac)
+		plt.subplots_adjust(wspace=0.35,hspace=0.35)
+		picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+	if 1:
+
+		# we have some kind of funky mapping where some of the points are not participating in edges so we reindex
 		pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
-		#! pts = outgoing['pts_order']
-		ax.scatter(*pts[:,:2].T,color='k',s=10)
-		lines = np.array([pts[edges[:,0]][:,:2],
-			pts[edges[:,1]][:,:2]]).transpose((1,0,2))
-		lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-		ax.add_collection(lc)		
-	# plot formatting
-	if False:
-		for pspec,ax in zip(pspecs,axes):
-			sn = sn=pspec['sn']
-			pspec['func'](ax=ax,sn=sn)
-	zoom_figure(fig,zoom_fac)
-	plt.subplots_adjust(wspace=0.35,hspace=0.35)
-	picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+		lipids_these = np.where(post[sn]['cluster_results'][fr]['clusters_lipids']>0)[0]
+		reindex = np.zeros(len(pts)).astype(int)
+		reindex[np.unique(outgoing['edges_reduced_lipids'])] = np.arange(len(lipids_these))
+		# corresponding cluster index for this frame is
+		cif = post[sn]['cluster_results'][fr]['clusters_lipids'][lipids_these]
+		bonds = resnames[lipids_these][reindex[edges]]
+		
