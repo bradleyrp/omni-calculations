@@ -393,20 +393,6 @@ if __name__=='__main__':
 		global frameslice
 		frameslice = (770,790)
 		
-		redo = 1
-		# compute clusters
-		for snum,sn in enumerate(sns):
-			if 'cluster_results' not in post[sn] or redo:
-				print('status computing clusters for %s %d/%d'%(sn,snum+1,len(sns)))
-				post[sn]['cluster_results'] = postprocess(sn)
-			if 'cluster_radius_gyration' not in post[sn] or redo:
-				looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
-				post[sn]['cluster_radius_gyration'] = basic_compute_loop(
-					clusters_to_radius_gyration,looper=looper,run_parallel=False)
-			if 'cluster_bond_propensities' not in post[sn] or redo:
-				looper = [dict(fr=fr,sn=sn) for fr in range(len(post[sn]['cluster_results']))]
-				post[sn]['cluster_bond_propensities'] = basic_compute_loop(
-					weird_count,looper=looper,run_parallel=False)
 		# CON-to-new reformulate the post
 		if 1:
 			if 'post' not in globals():
@@ -460,6 +446,22 @@ if __name__=='__main__':
 				cluster_sizes = counts_resnames.sum(axis=1)
 				#! i=2;rgs[np.all((rgs<bins[i],rgs>=bins[i-1]),axis=0)]
 				cluster_contents[sn] = dict(cluster_sizes=cluster_sizes,counts_resnames=counts_resnames)
+
+		redo = 1
+		# compute clusters
+		for snum,sn in enumerate(sns):
+			if 'cluster_results' not in post[sn] or redo:
+				print('status computing clusters for %s %d/%d'%(sn,snum+1,len(sns)))
+				post[sn]['cluster_results'] = postprocess(sn)
+			if 'cluster_radius_gyration' not in post[sn] or redo:
+				looper = [{'cluster_object':o} for o in post[sn]['cluster_results']]
+				post[sn]['cluster_radius_gyration'] = basic_compute_loop(
+					clusters_to_radius_gyration,looper=looper,run_parallel=False)
+			if 'cluster_bond_propensities' not in post[sn] or redo:
+				looper = [dict(fr=fr,sn=sn) for fr in range(len(post[sn]['cluster_results']))]
+				post[sn]['cluster_bond_propensities'] = basic_compute_loop(
+					weird_count,looper=looper,run_parallel=False)
+
 		# CON-to-new finding the largest cluster to see if something is weird
 		if 1:
 			cluster_ind_to_fr = {}
@@ -524,7 +526,8 @@ if __name__=='__main__':
 			axes[1].set_ylim(axes[0].get_ylim())
 			picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
 
-	if 0:
+	if 1:
+		
 		colors = {b'DOPE':'gray',b'DOPS':'blue',b'PI2P':'red'}
 		fr = 775
 		fr = fr-frameslice[0]
@@ -594,6 +597,7 @@ if __name__=='__main__':
 		zoom_figure(fig,zoom_fac)
 		plt.subplots_adjust(wspace=0.35,hspace=0.35)
 		picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+
 	if 1:
 
 		# we have some kind of funky mapping where some of the points are not participating in edges so we reindex
