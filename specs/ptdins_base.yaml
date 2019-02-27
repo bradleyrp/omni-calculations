@@ -109,37 +109,44 @@ slices:
       all: all
       ions: +selectors/ions
     slices:
-      current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
-      current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      # current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
+      # current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      current: {'pbc':'mol','groups':['all'],'start':1000,'end':501000,'skip':500}
   # LINKING makes it easy to compare different times
   membrane-v566: # 423ns
     groups: 
       all: all
       ions: +selectors/ions
     slices:
-      current: {'pbc':'mol','groups':['all'],'start':10000,'end':410000,'skip':500}
+      # current: {'pbc':'mol','groups':['all'],'start':10000,'end':410000,'skip':500}
       # current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      current: {'pbc':'mol','groups':['all'],'start':1000,'end':501000,'skip':500}
   membrane-v564: # runs to 142ns
     groups: 
       all: all
       ions: +selectors/ions
     slices:
-      current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
-      current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      # current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
+      # current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      # current: {'pbc':'mol','groups':['all'],'start':1000,'end':101000,'skip':100}
+      current: +slices/current
   membrane-v562: # runs to 104ns
     groups: 
       all: all
       ions: +selectors/ions
     slices:
-      current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
-      current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      # current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
+      # current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      # current: {'pbc':'mol','groups':['all'],'start':1000,'end':101000,'skip':100}
+      current: +slices/current
   membrane-v563: # runs to 206ns
     groups: 
       all: all
       ions: +selectors/ions
     slices:
-      current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
+      # current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
       current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
+      current: {'pbc':'mol','groups':['all'],'start':1000,'end':501000,'skip':500}
 
 variables:
   force_field: charmm
@@ -500,7 +507,7 @@ collections:
     - membrane-v532
   cursorXXX:
     - membrane-v566
-  cursor:
+  cursorZZ:
     - membrane-v531
     - membrane-v532
   cursorXXX:
@@ -524,3 +531,12 @@ collections:
     - membrane-v564
     - membrane-v563
     - membrane-v562
+  cursor:
+    - membrane-v531
+    - membrane-v532
+    - membrane-v565 
+    - membrane-v566
+    - membrane-v564
+    - membrane-v563
+    - membrane-v562
+    - membrane-v536
