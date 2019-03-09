@@ -112,7 +112,7 @@ slices:
       # current: {'pbc':'mol','groups':['all'],'start':10000,'end':90000,'skip':100}
       # current_ions: {'pbc':'mol','groups':['ions'],'start':10000,'end':90000,'skip':1}
       current: {'pbc':'mol','groups':['all'],'start':1000,'end':501000,'skip':500}
-  # LINKING makes it easy to compare different times
+  # LINKING makes it easy to compare different times. this simulation is complete in v565 now
   membrane-v566: # 423ns
     groups: 
       all: all
@@ -216,7 +216,7 @@ variables:
         - membrane-v533
         - membrane-v532
         - membrane-v534
-    #---setting canonical orderings for plots based on our underlying hypotheses
+    # setting canonical orderings for plots based on our underlying hypotheses
     canon:
       asymmetric:
         - membrane-v538
@@ -231,7 +231,7 @@ variables:
         - membrane-v532
         - membrane-v564 #
         - membrane-v565 #
-        - membrane-v566 #
+        - membrane-v533
         - membrane-v534
       asymmetric_no_dilute:
         - membrane-v538
@@ -414,7 +414,8 @@ collections:
   one:
     - membrane-v530
   long:
-    - membrane-v566
+    - membrane-v563
+    - membrane-v565
   important_two:
     - membrane-v531
     - membrane-v532
@@ -540,3 +541,5 @@ collections:
     - membrane-v563
     - membrane-v562
     - membrane-v536
+    - membrane-v533
+    - membrane-v534

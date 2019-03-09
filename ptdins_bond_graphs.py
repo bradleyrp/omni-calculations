@@ -510,6 +510,11 @@ if __name__=='__main__':
 		axes[1].set_ylim(axes[0].get_ylim())
 		picturesave('TMP7',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
 
+	#! turn this on for bond cluster plots
+	if 1:
+
+		sns = ['membrane-v531','membrane-v532']
+
 		colors = {'DOPE':'gray','DOPS':'blue','PI2P':'red'}
 		fr = 775
 		fr = fr-frameslice[0]
@@ -554,7 +559,7 @@ if __name__=='__main__':
 			
 			#! repetitive with above minus color calculation
 			ax = axes[1+ncols*snum]
-			ax.set_title('bridged lipids, '+title)
+			ax.set_title('bridged lipids, '+title+r'and $\mathrm{{PI(4,5)P}_{2}}$')
 			#! pts_red,edges_reduced = outgoing['p2'],outgoing['e2']
 			pts,edges = outgoing['points_reduced_lipids'],outgoing['edges_reduced_lipids']
 			#! pts = outgoing['pts_order']
@@ -566,14 +571,50 @@ if __name__=='__main__':
 			data.set('lipid_abstractor')
 			resnames = data.this[sn]['resnames'].astype(str)[imono==mn_top]
 			colors_this = [colors[resnames[i]] for i in lipids_these]
-			ax.scatter(*pts_these[:,:2].T,color=colors_this,s=10)
-			lines = np.array([pts[edges[:,0]][:,:2],
-				pts[edges[:,1]][:,:2]]).transpose((1,0,2))
-			lc = mpl.collections.LineCollection(lines,color='k',lw=0.5,zorder=zorder['lines'])
-			ax.add_collection(lc)		
+
+			fade_out = 0.35
+			vec = vecs[fr][:2]
+			for ishift,jshift in [(i,j) for i in range(-1,2) for j in range(-1,2)]:
+				# end color caclulation
+
+				ax.scatter(*(pts_these[:,:2]+vec*np.array([ishift,jshift])).T,
+					color=colors_this,s=10,zorder=2+zorder['lipids'],
+					alpha=fade_out if not ishift==0 or not jshift==0 else 1.0)
+				lines = np.array([pts[edges[:,0]][:,:2],
+					pts[edges[:,1]][:,:2]]).transpose((1,0,2))
+				lc = mpl.collections.LineCollection(lines+vec*np.array([ishift,jshift]),
+					color='k',lw=0.5,zorder=2+zorder['lines'],
+					alpha=fade_out if not ishift==0 or not jshift==0 else 1.0)
+				ax.add_collection(lc)
+
+			# box vectors
+			veclines = np.array([
+				[0,0],[vec[0],0],[vec[0],vec[1]],[0,vec[1]],[0,0]
+				])
+			ax.plot(*veclines.T,c='k',zorder=0)
+			
+			vec_expand_fac = 0.2
+			ax.set_ylim((vec[1]*-vec_expand_fac,vec[1]*(1+vec_expand_fac)))
+			ax.set_xlim((vec[1]*-vec_expand_fac,vec[0]*(1+vec_expand_fac)))
+
+			legendspec = []
+			for lipid_name in ['DOPE','DOPS','PI2P']:
+				legendspec.append(dict(name=
+					{'DOPE':'DOPE','PI2P':r'$\mathrm{{PI(4,5)P}_{2}}$','DOPS':'DOPS'}[lipid_name],
+					patch=mpl.patches.Rectangle((0,0),1.0,1.0,fc=colors[lipid_name])))
+			patches,labels = [list(j) for j in zip(*[(i['patch'],i['name']) for i in legendspec])]
+			legend = ax.legend(patches,labels,ncol=3,fontsize=10,
+				loc='upper center', bbox_to_anchor=(0.5, -0.15),)
+			frame = legend.get_frame()
+			frame.set_edgecolor('w')
+			frame.set_facecolor('white')
+
+			ax.set_xlabel('x (nm)')
+			ax.set_ylabel('y (nm)')
+
 		zoom_figure(fig,zoom_fac)
 		plt.subplots_adjust(wspace=0.35,hspace=0.35)
-		picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+		picturesave('TMP6',work.plotdir,backup=False,version=True,meta={},extras=[legend],dpi=300,form='png')
 
 	def compute_per_lipid(sn,fr):
 		"""
@@ -703,7 +744,7 @@ if __name__=='__main__':
 		plt.subplots_adjust(wspace=0.35,hspace=0.35)
 		picturesave('TMP8',work.plotdir,backup=False,version=True,meta={},extras=[],dpi=300,form='png')
 
-	if 'once_through' not in globals() or True:
+	if 'once_through' not in globals():
 
 		# iterate over the final plots
 		sns = work.sns()
@@ -940,7 +981,8 @@ if __name__=='__main__':
 					resnames_int[np.concatenate(cluster_specs[fr])],return_counts=True)
 				totals_by_lipid[resnames_inds,fr] = counts
 
-			if 0:
+			# turn this on after you start
+			if 1:
 
 				layout = {
 					'panels':{'start':2,'end':3,'trajectory':1,'counts':0},
@@ -1146,7 +1188,8 @@ if __name__=='__main__':
 					backup=False,version=True,meta={},extras=[legend],dpi=300,form='png')
 
 			# final cluster blob plot
-			if 0: 
+			#! might need to turn this on later
+			if 1: 
 
 				from matplotlib.collections import PatchCollection
 
@@ -1240,6 +1283,485 @@ if __name__=='__main__':
 				ax.set_title(title)
 				picturesave('fig.cluster_blob.%s'%sn,work.plotdir,
 					backup=False,version=True,meta={},extras=[],dpi=300,form='png')
+
+	# NEW SHIT IS COMING TO LIGHT
+	# reformulating to put multiple blob plots on one panel
+	# highly hacked, and urgently before BPS very unpleasant work
+	if 0:
+
+		import matplotlib.gridspec as gridspec
+		def special_gs1():
+			panels = {}
+			gs = gridspec.GridSpec(2,3)
+			panels['membrane-v563'] = plt.subplot(gs[0:2,0:2])
+			panels['membrane-v565'] = plt.subplot(gs[0:2,0:2])
+			panels['membrane-v534'] = plt.subplot(gs[0:2,2:3])
+			panels['membrane-v536'] = plt.subplot(gs[0:2,2:3])
+			return panels
+
+		views = [
+			{'figsize':(8,8),'name':'fig.blob.special.s1','panels':'special_gs1',
+				'whens':{
+					'membrane-v563':[1,101,201,301,401,501],
+					'membrane-v565':[1,101,201,301,401,501],
+					'membrane-v534':[20,100],
+					'membrane-v536':[20,100],
+					},
+				'times':{
+					'membrane-v563':[0,100,200,300,400,500],
+					'membrane-v565':[0,100,200,300,400,500],
+					'membrane-v534':[20,100],
+					'membrane-v536':[20,100],
+					},
+				'color':{
+					'membrane-v563':'r',
+					'membrane-v565':'b',
+					'membrane-v534':'r',
+					'membrane-v536':'b',
+					},
+				'zorder':{
+					'membrane-v563':3,
+					'membrane-v565':2,
+					'membrane-v534':6,
+					'membrane-v536':5,
+					},
+				'global_max':70.,
+				},
+			]
+
+		#! this is fucked
+		for view in views[:1]:
+
+			custom_colors = {
+				'membrane-v563':'r',
+				'membrane-v565':'#404040',
+				'membrane-v534':'#4b33ff',
+				'membrane-v536':'#ffa733',
+				}
+
+			"""
+			sequence was: 
+				first did special_gs1 above
+				then did the width_ratios below
+				then realized this makes it impossible to do equal axes and hence get circles
+					instead of ellipses so moving back to a single plot
+			"""
+			fig,axes = plt.subplots(nrows=1,ncols=1,figsize=view['figsize'])
+			axes = [axes]
+			#! panels = globals()[view['panels']]()
+			panels = [
+				('membrane-v565',0),
+				('membrane-v563',0),
+				('membrane-v536',0),
+				('membrane-v534',0),
+			]
+			if False:
+				fig,axes = plt.subplots(nrows=1,ncols=2,sharey=True,#sharex='col',
+				   gridspec_kw={'width_ratios': [2,2]},figsize=(8,6))
+				fig.set_tight_layout({'rect': [0,0,1,0.95],'pad': 1.5,'h_pad': 1.5})
+				#! plt.setp(axes, title='Test')
+				fig.suptitle('An overall title', size=20)
+				panels = [
+					('membrane-v565',0),
+					#('membrane-v563',0),
+					('membrane-v536',1),
+					#('membrane-v534',1),
+				]
+				scale_remember = {}
+
+			# collecting sources first
+			sources = {}
+			for sn,anum in list(panels)[:]:
+				ax = axes[anum]
+				print('status plotting %s'%sn)
+
+				### START SEQUENCE NECESSARY FOR THE FINAL PLOT
+				if 1:
+
+					# develop a unique listing of each item in a cluster
+					# note that cluster_specs is indexed by absolute lipid residue index
+					cluster_specs = []
+					nframes = nframes_by_sn[sn]
+					for fr in range(nframes):
+						status('collecting clusters',i=fr+1,looplen=nframes)
+						pts = data_up.this[sn]['%d__points_reduced_lipids'%fr]
+						edges = data_up.this[sn]['%d__edges_reduced_lipids'%fr]
+						clusters_lipids = data_up.this[sn]['%d__clusters_lipids'%fr]
+						cluster_inds = np.arange(1,max(clusters_lipids))
+						cl = [tuple(np.where(clusters_lipids==i)[0]) for i in cluster_inds]
+						cluster_specs.append(cl)
+					# map each cluster to a code
+					codes = 0
+					cluster_toc = {}
+					for fr in range(nframes):
+						for i in cluster_specs[fr]:
+							if i not in cluster_toc:
+								cluster_toc[i] = codes
+								codes += 1
+					# prepare colors
+					sizes_toc = dict([(i,len(i)) for i in cluster_toc])
+					cluster_order = dict([(i,ii) for ii,i in enumerate(cluster_toc.keys())])
+					codes_by_size = []
+					for fr in range(nframes):
+						codes = [cluster_toc[i] for i in cluster_specs[fr]]
+						sizes = [sizes_toc[i] for i in cluster_specs[fr]]
+						codes_by_size.append(list(zip(sizes,codes)))
+					# get the maximum size for all clusters with a buffer for length
+					total_size_max = max([sum(list(zip(*i))[0])+len(i) for i in codes_by_size])
+					# generate colors
+					range_this = list(range(len(cluster_toc)))
+					np.random.shuffle(range_this)
+					colors_mapped = [mpl.cm.__dict__['jet'](float(i)/(len(cluster_toc)-1.)) for i in range_this]
+					# get residue names
+					imono = data.this[sn]['monolayer_indices']
+					data.set('lipid_abstractor')
+					resnames = data.this[sn]['resnames'].astype(str)[imono==mn_top]
+					resnames_all = dict([(i,ii) for ii,i in enumerate(np.unique(resnames))])
+					colors_these = [mpl.colors.to_rgba(i) for i in ['gray','blue','red']]
+
+					# make a blank canvas
+					canvas_unsort = np.zeros((nframes,total_size_max,4))
+					canvas_sort = np.zeros((nframes,total_size_max,4))
+					canvas_resname_color = np.zeros((nframes,total_size_max,4))
+					"""
+					first built the plot with a "natural" ordering that is somewhat stochastic but largely reflects the
+					order in which clusters were identified, and hence is somewhat coherent
+					then I changed the below inner for loop to work on size and this made things cohere more, since 
+					the size carries some ability to uniquely identify the clusters
+					the next modification is to change from colors to residue namein a second axis
+					"""
+					for fr in range(nframes):
+						y = 0
+						for size,index in codes_by_size[fr]:
+							canvas_unsort[fr,y:y+size,:] = colors_mapped[index]
+							y += size + 1
+						y = 0
+						#? stacking by a sorted size makes the plot look more uniform, but not ncessarily better?
+						for size,index in sorted(codes_by_size[fr],key=lambda x:x[0]):
+							canvas_sort[fr,y:y+size,:] = colors_mapped[index]
+							y += size + 1
+						y = 0
+						# sorting by size and color by residue name
+						for size,index in sorted(codes_by_size[fr],key=lambda x:x[0]):
+							this_cluster = list(cluster_toc.keys())[index]
+							this_colors = np.array([[colors_these[k] for k in j] 
+								for j in [sorted([resnames_all[resnames[i]] 
+									for i in this_cluster])]])
+							canvas_resname_color[fr,y:y+size,:] = this_colors
+							y += size + 1
+
+					max_sizes = 0
+					max_counts = 0
+					max_sc = 0
+					for fr in range(nframes):
+						sizes,counts = np.unique(list(zip(*codes_by_size[fr]))[0],return_counts=True)
+						max_sizes = max(sizes) if max(sizes)>max_sizes else max_sizes
+						max_counts = max(counts) if max(counts)>max_counts else max_counts
+						combo = sizes*counts
+						max_sc = max(combo) if max(combo)>max_sc else max_sc
+
+					n_lipids = 3 #! hardcoded for now
+
+					# stacked bar chart of composition of each sized cluster
+					bars_comp = []
+					for fr in [0,nframes-1][:]:
+						sizes,counts = np.unique(list(zip(*codes_by_size[fr]))[0],return_counts=True)
+						bars = []
+						for size,count in zip(sizes,counts):
+							props = np.zeros(n_lipids)
+							participants = [i for i in cluster_specs[fr] if len(i)==size]
+							if len(participants)==0: continue
+							kinds,counts_residue = np.unique(
+								# codes for each lipid participating in all clusters of this size
+								[resnames_all[resnames[i]] for i in np.concatenate(participants)],
+								return_counts=True)
+							# save the cluster size, the residue codes, the counts for those codes, 
+							#   and the total participants
+							bars.append((size,kinds,counts_residue,size*count))
+						bars_comp.append(bars)
+
+					pixels_w = 5000.
+
+					# unretired version uses bars_comp above
+					canvases,counts_max = [],[]
+					for side,bars in enumerate(bars_comp):
+						# interject a way to figure out the 
+						vals = np.zeros((n_lipids,max_sizes+1))
+						for lnum in range(n_lipids):
+							for size,kinds,counts,total in bars:
+								if lnum in kinds:
+									vals[lnum][size] = counts[list(kinds).index(lnum)]/sum(counts)*total
+						vals = vals[::-1] #! reverse lipid order here and with colors_these
+						vals_cumulative = np.cumsum(np.concatenate(([np.zeros(max_sizes+1)],vals)),axis=0)
+						canvas = np.zeros((max_sizes+1,int(pixels_w),4))
+						fac = pixels_w/vals_cumulative.max()
+						# save this for the x-axis limits later
+						counts_max.append(vals_cumulative.max())
+						for lnum in range(n_lipids):
+							for ii,(i,j) in enumerate(zip(
+								(vals_cumulative[lnum]*fac).astype(int),(vals_cumulative[lnum+1]*fac).astype(int)
+								)):
+								canvas[ii,i:j] = colors_these[::-1][lnum]
+						canvases.append(canvas)
+					#! invert_xaxis instead: canvases[0] = canvases[0][:,::-1]
+					# build a pixel map of the numbers of clusters of each size by time
+					canvas_traj = np.zeros((max_sizes+1,nframes,4))
+					canvas_traj_alt = np.zeros((max_sizes+1,nframes))
+					for fr in range(nframes):
+						sizes,counts = np.unique(list(zip(*codes_by_size[fr]))[0],return_counts=True)
+						for s,c in zip(sizes,counts):
+							canvas_traj[s,fr] = mpl.cm.jet(float(c)/max_counts)
+							canvas_traj_alt[s,fr] = float(c)
+
+					# calculate the total clustered lipids
+					totals = np.zeros(nframes)
+					totals_by_lipid = np.zeros((n_lipids,nframes,))
+					for fr in range(nframes):
+						sizes,counts = np.unique(list(zip(*codes_by_size[fr]))[0],return_counts=True)
+						totals[fr] = sum(sizes*counts)
+						resnames_inds,counts = np.unique(
+							resnames_int[np.concatenate(cluster_specs[fr])],return_counts=True)
+						totals_by_lipid[resnames_inds,fr] = counts
+
+					from matplotlib.collections import PatchCollection
+
+					class dotrow:
+						def __init__(self,ax,size,center):
+							self.ax = ax
+							self.center = center
+							self.size = size
+
+					import seaborn as sb
+					import pandas as pd
+					sb.set(style="white")
+
+				# one timepoint is: canvas_traj_alt[:,0]
+				whens = view['whens'][sn]
+				time_start,time_end = data.extras[sn]['start']/1000.,data.extras[sn]['end']/1000.
+				times = np.linspace(time_start,time_end,nframes)
+				#! reform the whens to be frame numbers
+				whens = [np.abs(times-w).argmin() for w in whens]
+				# customize (hack?) the times right here but this is basically right anyway
+				times = view['times'][sn]
+				#! whens = [np.where(times==w)[0][0] for w in whens]
+				this = canvas_traj_alt[:,0]
+				raw = np.concatenate([np.ones(int(i*j))*i for i,j in zip(np.arange(len(this)),this)])
+				raws = [np.concatenate([np.ones(int(i*j))*i for i,j in zip(np.arange(len(this)),this)])
+					for this in [canvas_traj_alt[:,i] for i in whens]]
+				# send the actual histograms to the df
+				raw_prep = pd.DataFrame(dict([(ii,canvas_traj_alt[:,i]) 
+					for ii,i in enumerate(whens)]))
+				dat_raw = np.concatenate(np.array([[(ii,j) for j in i] 
+					for ii,i in zip(range(len(raws)),raws)]))
+				# above dat_raw is one lipid per cluster size while raw_prep is 
+				#   the number of each cluster size
+				df = pd.DataFrame(data=dat_raw,columns=['x','y'])
+
+				# size mapper
+				dot_s_min,dot_s_max = 1.,dat_raw[:,1].max()
+				def sizer(i,small=0.5,big=10):
+					return float((i-dot_s_min))/(dot_s_max-dot_s_min)*(big-small)+small
+				sizes = np.array([sizer(i) for i in dat_raw[:,1]])
+
+				# reform thing
+				source = np.array(raw_prep)
+				width = 5.0
+				centers = np.arange(1,1+2*width)*2*width
+				width_max = width*2
+				obs_max = source.max()
+				obs_max_inds = np.transpose(np.where(obs_max==raw_prep))[0]
+				scale_cluster_size = obs_max_inds[0]
+				scale = obs_max/width_max/4.
+				yvals = np.arange(source.shape[0])
+
+				xlims = (0+width-2*scale,centers[-1]+width+2*scale)
+				# xlims = (whens[0],whens[-1])
+				xfactor = 70.
+				#! hack the width factor for the smaller panel
+				if anum==1: xfactor = 70/5.
+				xlims = (0,xfactor)
+				ylims = (0,70)
+				stretch = (ylims[1]-ylims[0])/(xlims[1]-xlims[0])
+
+				sources[sn] = source
+
+			# ^^^ make the raw prep above and then do this
+			sn = 'membrane-v565' # everything relative to this
+			source = sources[sn]
+			yvals = np.arange(source.shape[0])
+			width = 5.0
+			centers = np.arange(1,1+2*width)*2*width
+
+			# extend the source with v536
+			source_right = sources['membrane-v536']
+			source = np.concatenate((source.T,np.zeros((2,len(source))))).T
+			source[:len(source_right),6:] = source_right
+
+			#! rejigger this after realizing the other dots are plumper
+			yvals = np.arange(source.shape[0])
+
+
+			# one timepoint is: canvas_traj_alt[:,0]
+			whens = view['whens'][sn]
+			time_start,time_end = data.extras[sn]['start']/1000.,data.extras[sn]['end']/1000.
+			times = np.linspace(time_start,time_end,nframes)
+			#! reform the whens to be frame numbers
+			whens = [np.abs(times-w).argmin() for w in whens]
+			# customize (hack?) the times right here but this is basically right anyway
+			times = view['times'][sn]
+
+			ax = axes[anum]
+
+			cmap = mpl.cm.__dict__['jet']
+			colors = [cmap(float(ii)/(len(source.T)-1)) for ii in range(len(source.T))]
+			def scale_calc(nlipids):
+				base_size = (scale/2.) # radius for scale_cluster_size
+				apl = base_size**2*np.pi/scale_cluster_size
+				"""
+				apl = base_size**2*pi/scale_cluster_size
+				area = pi*r**2 = nlipids * apl
+				radius = np.sqrt((nlipids*apl)/np.pi)
+				"""
+				return np.sqrt((nlipids*apl)/np.pi)
+
+
+			# ii is the time index
+			for ii,this in list(enumerate(source.T))[:]:
+				# j is the number of clusters and jj is the indexcluster size index
+				for jj,j in enumerate(this):
+					radius = scale_calc(jj) # off by a factor of 2 but whatever
+					#if sn in ['membrane-v563']:
+					#	radius = scale_remember['membrane-v565']
+					#elif sn in ['membrane-v565']:
+					#	scale_remember[sn] = radius
+					#if (ii==0 and jj==2) or (ii==9 and jj==61):
+					#	print(radius)
+					if j==0: continue
+					center = centers[ii]
+					#! ax.axvline(center,color='k',zorder=1)
+					spots = np.arange(j)*radius*2
+					spots += center-(spots.max()-spots.min())/2.
+					patches = []
+					for x in spots:
+						# offset for vertical line
+						detail = (x+(width if ii>5 else 0),yvals[jj])
+						patch = mpl.patches.Circle(detail,radius=radius,lw=0)
+						patches.append(patch)
+					color = custom_colors['membrane-v565'] if ii<5+1 else custom_colors['membrane-v536']
+					collection = PatchCollection(patches,alpha=1.0,
+						color=color,zorder=view['zorder'][sn],
+						lw=0)#,color=colors[ii]
+					ax.add_collection(collection)
+
+			########## START MAJOR REPEAT
+
+			# ^^^ make the raw prep above and then do this
+			sn = 'membrane-v563' # everything relative to this
+			source = np.array(sources[sn]) # nlipids by times
+			yvals = np.arange(source.shape[0])
+			width = 5.0
+			centers = np.arange(1,1+2*width)*2*width
+
+			# extend the source with v536
+			source_right = np.array(sources['membrane-v534']) # nlipids by times is 13 x 2
+			# pad with zeros to get to 13
+			source = np.concatenate((source,np.zeros((7,6))))
+			source = np.concatenate((source.T,np.zeros((2,len(source))))).T
+			source[:len(source_right),6:] = source_right
+			
+			#! somehow this line magically returned to plumper blobs which is good but wut?
+			yvals = np.arange(source.shape[0])
+
+			# one timepoint is: canvas_traj_alt[:,0]
+			whens = view['whens'][sn]
+			time_start,time_end = data.extras[sn]['start']/1000.,data.extras[sn]['end']/1000.
+			times = np.linspace(time_start,time_end,nframes)
+			#! reform the whens to be frame numbers
+			whens = [np.abs(times-w).argmin() for w in whens]
+			# customize (hack?) the times right here but this is basically right anyway
+			times = view['times'][sn]
+
+			ax = axes[anum]
+
+			cmap = mpl.cm.__dict__['jet']
+			colors = [cmap(float(ii)/(len(source.T)-1)) for ii in range(len(source.T))]
+			def scale_calc(nlipids):
+				base_size = (scale/2.) # radius for scale_cluster_size
+				apl = base_size**2*np.pi/scale_cluster_size
+				"""
+				apl = base_size**2*pi/scale_cluster_size
+				area = pi*r**2 = nlipids * apl
+				radius = np.sqrt((nlipids*apl)/np.pi)
+				"""
+				return np.sqrt((nlipids*apl)/np.pi)
+
+
+			# ii is the time index
+			for ii,this in list(enumerate(source.T))[:]:
+				# j is the number of clusters and jj is the indexcluster size index
+				for jj,j in enumerate(this):
+					radius = scale_calc(jj) # off by a factor of 2 but whatever
+					#if sn in ['membrane-v563']:
+					#	radius = scale_remember['membrane-v565']
+					#elif sn in ['membrane-v565']:
+					#	scale_remember[sn] = radius
+					#if (ii==0 and jj==2) or (ii==9 and jj==61):
+					#	print(radius)
+					if j==0: continue
+					center = centers[ii]
+					#! ax.axvline(center,color='k',zorder=1)
+					spots = np.arange(j)*radius*2
+					spots += center-(spots.max()-spots.min())/2.
+					patches = []
+					for x in spots:
+						# offset for vertical line
+						detail = (x+(width if ii>5 else 0),yvals[jj])
+						patch = mpl.patches.Circle(detail,radius=radius,lw=0)
+						patches.append(patch)
+					color = custom_colors['membrane-v563'] if ii<5+1 else custom_colors['membrane-v534']
+					collection = PatchCollection(patches,alpha=1.0,
+						color=color,zorder=2 if ii<5+1 else 1,
+						lw=0)#,color=colors[ii]
+					ax.add_collection(collection)
+
+			########## END MAJOR REPEAT
+
+
+			#! this is in tension with the layout and would enforce squareness i.e. round circles
+			#!   but if we want the layout to have a side-by-side they have to ne elliptical and we fine-tune
+			ax.set_aspect('equal') 
+			ax.set_xlim(xlims)
+			ax.set_ylim(ylims)
+			#! xticks = centers/70.
+			if anum==0: xticks = centers/xfactor*xlims[1]
+			else: xticks = centers/xfactor
+			# offset for vertical line
+			xticks = np.concatenate((xticks[:5+1],xticks[5+1:]+width))
+			ax.set_xticks(xticks)
+			ax.set_xlim((0,xfactor)) #! haave to do this again for some fuckin reasopn
+			#! ax.set_xticklabels(times[whens].astype(int)-1)
+			ax.set_xticklabels(times+[0,100])
+			ax.set_xlabel('time (ns)')
+			if anum==0:
+				ax.set_ylabel(r'$\mathrm{N_{lipids}}$ per cluster')
+			title = '%s, %s'%(work.metadata.meta[sn]['ptdins_label'],work.metadata.meta[sn]['ion_label'])
+			#ax.set_title(title)
+			ax.axvline(70.0-width/2.,lw=1,c='k')
+			ax.set_xlim((0,95))
+
+			legendspec = []
+			for sn in ['membrane-v565','membrane-v563','membrane-v534','membrane-v536',]:
+				legendspec.append(dict(name='%s, %s'%(
+					work.metadata.meta[sn]['ptdins_label'],work.metadata.meta[sn]['ion_label']),
+					patch=mpl.patches.Rectangle((0,0),1.0,1.0,fc=custom_colors[sn])))
+			patches,labels = [list(j) for j in zip(*[(i['patch'],i['name']) for i in legendspec])]
+			legend = ax.legend(patches,labels,loc='upper left',ncol=1,fontsize=10)
+			frame = legend.get_frame()
+			frame.set_edgecolor('w')
+			frame.set_facecolor('white')
+
+			picturesave(view['name'],work.plotdir,
+				backup=False,version=True,meta={},extras=[legend],dpi=300,form='png')
 
 	# mark that we have completed one interation
 	once_through = True
