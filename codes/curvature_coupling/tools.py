@@ -3,13 +3,15 @@
 import os,sys,time
 import numpy as np
 from joblib import Parallel,delayed
-from joblib.pool import has_shareable_memory
-from base.tools import status,framelooper
+#from joblib.pool import has_shareable_memory
+#from base.tools import status,framelooper
 import multiprocessing as mp
 machine_eps = eps = np.finfo(float).eps
 import scipy
 import scipy.optimize
-from omnicalc import store,load
+#! from omnicalc import store,load
+from omni import store,load
+from ortho import status
 
 #---backwards compatibility
 show_optimization_log = False
@@ -101,7 +103,7 @@ def gauss2d(grid,**kwargs):
 	c0 = kwargs['curvature']
 	sx = kwargs['sigma_a']
 	sy = kwargs['sigma_b']
-	z0 = kwargs.get('z0',0)
+	z0 = kwargs.get('z0',0.0)
 	x0,y0 = kwargs['x0'],kwargs['y0']
 	x,y = np.transpose(np.reshape(grid,(np.product(np.shape(grid)[:2]),2)))
 	if c0=='0': return zeros(np.shape(grid)[:2])
@@ -114,6 +116,7 @@ def construct_curvature_field(**kwargs):
 	"""
 	Create a single curvature field over a regular grid over a fixed spatial extent.
 	Note that we have a ceiling on curvature for added dimples.
+	!!!!!!! PBCs under development.
 	"""
 	#---grid dimensions
 	m,n = kwargs.pop('mn')
@@ -127,11 +130,16 @@ def construct_curvature_field(**kwargs):
 	grid = np.array([[[i,j] for j in np.linspace(0,3*vecs[1]/lenscale,3*n)] 
 		for i in np.linspace(0,3*vecs[0]/lenscale,3*m)])
 	field = np.zeros(np.shape(grid)[:2])
-	#---loop over dimples
-	for center in centers:
-		field += gauss2d(grid,x0=vecs[0]*(1+center[0]),y0=vecs[1]*(1+center[1]),
+	#---we apply PBCs here. this might slow things down
+	#---previously PBCs were only implemented on the field (!) not the centers
+	offsets = np.concatenate(np.transpose(np.meshgrid(np.arange(3),np.arange(3))))
+	centers_pbc = np.array([c+offset for c in centers for offset in offsets])
+	#---loop over dimples with replicates in PBCs
+	for center in centers_pbc:
+		field += gauss2d(grid,x0=vecs[0]*center[0],y0=vecs[1]*center[1],
 			curvature=1.0,**kwargs)
-	#---ceiling on curvature
+	#---ceiling on curvature in case multiple inducers overlap
+	#---! NOTE
 	field[field>1.0] = 1.0
 	#---remove duplicates under PBCs
 	field_one = field[m:2*m,n:2*n]
@@ -405,7 +413,7 @@ def manyjob(function,queue,objects,session_classes,kwargs=None,single=False):
 				time.sleep(1)
 			pool.join()
 		except KeyboardInterrupt:
-			print "[STATUS] interrupted!"
+			print("[STATUS] interrupted!")
 			pool.terminate()
 			pool.join()
 			interrupted = True

@@ -4,6 +4,11 @@
 INSPECT THE CURVATURE COUPLING RESULTS
 """
 
+#! macos is fucked
+import matplotlib as mpl
+mpl.use("TkAgg")
+
+
 #! somewhat counterintuitive to do this directly. more elegant solution
 from calcs.codes import curvature_coupling # .InvestigateCurvature
 from calcs.codes.curvature_coupling import InvestigateCurvature
@@ -19,6 +24,7 @@ from calcs.dextran_importer import plotloader_for_dextran
 if __name__=='__main__':
 	ic = codes.curvature_coupling.InvestigateCurvature.\
 		InvestigateCurvature(plotloader=plotloader_for_dextran)
+
 	if False:
 		art = {'fs':{'legend':10}}
 		labels = dict([(i,i) for i in work.sns()])

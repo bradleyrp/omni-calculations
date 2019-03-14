@@ -553,7 +553,8 @@ def average_normal_projections(fr,mvec,pivot,maxflux,do_inflate=False):
 	# note that we make a tree from the instantaneous points then probe over the average surface
 	#! more efficient to do this in reverse, however it might not cover all of the average/reference points?
 	# prepare a KDTree. we use a fudge factor of 1000 epsilon to avoid angry errors about being outside the box
-	tree = scipy.spatial.ckdtree.cKDTree(instant,boxsize=np.concatenate((mvec,mvec))+1000.*eps)
+	#! tree = scipy.spatial.ckdtree.cKDTree(instant,boxsize=np.concatenate((mvec,mvec))+1000.*eps)
+	tree = scipy.spatial.ckdtree.cKDTree(instant,boxsize=np.array(mvec)+1000.*eps)
 	# find the nearest reference points for each instantaneous point
 	close,nns = tree.query(surf,k=1)
 	# given a mapping between instantaneous point and target position (on XY), project the instantaneous point

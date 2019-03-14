@@ -48,7 +48,11 @@ def repacker(source,source_out):
 	result['framenos'] = np.array(framenos)
 	attrs['grid_spacing'] = 1.0
 	#! check
-	if False: plt.imshow(regular.T,origin='lower',interpolation='nearest');plt.show()
+	if 1: 
+		import matplotlib as mpl
+		mpl.use("TkAgg")
+		import matplotlib.pyplot as plt
+		plt.imshow(regular.T,origin='lower',interpolation='nearest');plt.show()
 	# save the new object
 	import ipdb;ipdb.set_trace()
 	store(obj=result,name=source_out,path='/home/localshare/factory/data/dextran/post',attrs=attrs)
@@ -63,13 +67,23 @@ post_dn = "/home/rpb/omicron/dataset-project-polymers/samrad-curvature-2019.03.0
 sources = {
 	'CL160ENS-1':
 		"/home/rpb/omicron/dataset-project-polymers/samrad-curvature-2019.03.00/ResultsForDex/"
-		"CL160ENS-1/memb_xyz-0-0-1000.xyz",}
+		"CL160ENS-1/",}
+
+
+post_dn = "/Users/rpb/worker/simulations/samrad-curvature-2019.03.00/ResultsForDex/CL160ENS-1"
+sources = {
+	'CL160ENS-1':
+		"/Users/rpb/worker/simulations/samrad-curvature-2019.03.00/ResultsForDex/"
+		"CL160ENS-1/NG_Position-0_Frame-0.dat",}
 
 #---repackage all sources
 for sn,source in sources.items():
 	source_out = 'repacked_%s'%os.path.basename(source)
 	drop_fn = os.path.join(post_dn,source_out)
-	if not os.path.isfile(drop_fn): repacker(source,source_out)
+	if not os.path.isfile(drop_fn): 
+		print('RUNNING THE REPACKER???')
+		import ipdb;ipdb.set_trace()
+		repacker(source,source_out)
 
 def plotloader_for_dextran(calcname):
 	"""
