@@ -93,15 +93,23 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 		if os.path.isfile(itp_fn): itp_fn_abs = itp_fn
 		# if path is relative then we consult the spots
 		else:
-			raise Exceptions('we need the full ITP for %s'%sn)
+			#! until we fix the spotname, we need to use absolute paths
+			#! hacking in a special path to make things easier
+			try: sn_dir = os.path.join(work.metadata.variables['dev_special_path'],sn)
+			except: raise Exception('development error')
+			#! raise Exception(('we need the full ITP for "%s". cannot find: %s. '
+			#! 	'use absolute paths for now. (dev error)')%(sn,itp_fn))
 			#!!! this is deprecated in the omnicalc ortho_refactor
 			#! previously work.config['spots'][work.namer.get_spotname(sn)]
-			rootdir = os.path.join(*[work.config['spots'][work.namer.get_spotname(sn)][k] 
-				for k in ['route_to_data','spot_directory']])
-			#! rootdir = work.raw.spots[(work.raw.spotname_lookup(sn),'structure')]['rootdir']
-			sn_dir = os.path.join(rootdir,sn)
+			if False:
+				rootdir = os.path.join(*[work.config['spots'][
+					work.namer.get_spotname(sn)][k] for k in ['route_to_data','spot_directory']])
+				#! rootdir = work.raw.spots[(work.raw.spotname_lookup(sn),'structure')]['rootdir']
+				sn_dir = os.path.join(rootdir,sn)
 			# user supplies step folder and path to the reference structure
 			itp_fn_abs = os.path.join(sn_dir,itp_fn)
+			if not os.path.isfile(itp_fn_abs):
+				raise Exception('cannot find %s'%itp_fn_abs)
 		protein_itp = mod['GMXTopology'](itp_fn_abs)
 		for molname in protein_itp.molecules:
 			# mimic the procedure above for lipids

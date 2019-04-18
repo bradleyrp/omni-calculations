@@ -205,7 +205,8 @@ def contacts(**kwargs):
 	result['times'] = np.array(times)
 	# save the rowspec so we know up to unpack the data correctly
 	attrs['defn_rowspec'] = defn_rowspec
-	attrs['defn_rowspec_reduced'] = defn_rowspec
+	#! leaving out the reduced rowspec until we refactor below: 
+	#!   attrs['defn_rowspec_reduced'] = defn_rowspec_reduced
 
 	#! this needs refactored
 	if False:

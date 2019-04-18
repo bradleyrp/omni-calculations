@@ -741,3 +741,17 @@ calculations:
             - protein heavy
       cutoff: 
         loop: [3.4,5.0]
+
+plots:
+  video_maker:
+    script: video_maker.py
+    autoplot: True
+    plotload_version: 1
+    collections: cursor
+    #! calculation only for slices
+    calculation:
+      lipid_abstractor:
+        selector: lipid_com
+    specs:
+      scene: video_scene_actinlink.py
+  
