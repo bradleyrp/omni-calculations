@@ -9,9 +9,11 @@ import multiprocessing as mp
 machine_eps = eps = np.finfo(float).eps
 import scipy
 import scipy.optimize
-#! from omnicalc import store,load
-from omni import store,load
-from ortho import status
+if 0:
+	from omnicalc import store,load
+else:
+	from omni import store,load
+	from ortho import status
 
 #---backwards compatibility
 show_optimization_log = False

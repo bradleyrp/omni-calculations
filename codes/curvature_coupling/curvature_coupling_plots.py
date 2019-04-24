@@ -5,15 +5,26 @@ Curvature undulation coupling plots.
 """
 
 import re
-from codes.curvature_coupling.curvature_coupling import InvestigateCurvature
+from calcs.codes.curvature_coupling.curvature_coupling import InvestigateCurvature
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-from render.wavevids import plothull
-from codes.looptools import basic_compute_loop
+from calcs.render.wavevids import plothull
+from ortho import status
+from omni.plotter.panels import square_tiles
+#! from codes.looptools import basic_compute_loop
+#! from omni import basic_compute_loop
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from omni.base.store import picturesave
 
 #---plotting environment
 import builtins
-for key in builtins._plotrun_specials: 
-	globals()[key] = builtins.__dict__[key]
+
+#! hacking this in
+#is_live = False;builtins.__dict__['is_live'] = is_live
+
+#for key in builtins._plotrun_specials: 
+#	globals()[key] = builtins.__dict__[key]
 
 def center_by_protein(sn,surfs,static=False,exclude_hydrogen=False):
 	"""
@@ -66,7 +77,7 @@ def plot_hull_and_trial_centers(data,sn,ax,n_instances=None,debug_frame=0,color=
 	#---! currently only set for a single protein
 	trials = data[sn]['drop_gaussians_points'].transpose(1,0,2)
 	nframes = len(trials)
-	if n_instances!=None: samples = np.arange(0,nframes,nframes/n_instances)
+	if n_instances!=None: samples = np.arange(0,nframes,nframes/n_instances).astype(int)
 	else: samples = np.array([debug_frame])
 	pts = np.concatenate(trials[samples])
 	for ptsnum,pts in enumerate(trials[samples]):
@@ -76,7 +87,10 @@ def plot_hull_and_trial_centers(data,sn,ax,n_instances=None,debug_frame=0,color=
 	vecs,points_protein = [postdat[sn][i] for i in ['vecs','points_protein']]
 	for ptsnum,pts in enumerate(points_protein[samples][...,:2]):
 		color_this = mpl.cm.__dict__['jet'](float(ptsnum)/len(samples)) if not color else color
-		plothull(ax,pts,griddims=griddims,vecs=vecs,lw=0,c=color_this)
+		#! some of the trial points for dextran have only one point
+		try: plothull(ax,pts,griddims=griddims,vecs=vecs,lw=0,c=color_this)
+		except:
+			pass
 	ax.set_xlim((0,vecs[0]))
 	ax.set_ylim((0,vecs[1]))
 	ax.set_aspect(1.0)
@@ -98,11 +112,13 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 	"""
 	Loop over all upstream curvature-undulation coupling calculations and plot a panel of review plots.
 	"""
+	report = {}
 	#---seeping namespace
 	if seep!=None:
 		for key,val in seep.items(): globals()[key] = val
 	for tag in datas:
 		for sn in work.sns():
+			report[(sn,tag)] = {}
 			status('reviewing curvature for %s'%sn,tag='plot')
 			cmap_name = 'RdBu_r'
 			square_tiles_args = {}
@@ -111,16 +127,18 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				favor_rows=horizontal,**square_tiles_args)
 			#---several plots use the same data
 			vecs = postdat[sn]['vecs']
+			#! need this to be a mean because the vecs are changing now ...!!! CHECK THIS
+			#! vecs = vecs.mean(axis=0) #! moved this upstream to the plot script where postdat is prepared
 			griddims = datas[tag][sn]['cf'].shape
 			#---shared variables for several plots
 			cmax = np.abs(datas[tag][sn]['cf']).max()
 			cmax_instant = np.abs(datas[tag][sn]['cf_first']).max()
-			hicut = calcs[tag][sn]['calcs']['specs'].get('fitting',{}).get('high_cutoff',1.0)
+			#! new data structures ...!!! hicut = calcs[tag][sn]['calcs']['specs'].get('fitting',{}).get('high_cutoff',1.0)
+			hicut = work.metadata.calculations['curvature_undulation_coupling_dex'].get('fitting',{}).get('high_cutoff',1.0)
 			#---PLOT the mean curvature field
 			if 'average_field' in viewnames:
 				ax = axes[viewnames.index('average_field')]
-				im = ax.imshow(datas[tag][sn]['cf'].T,origin='lower',interpolation='nearest',
-					vmax=cmax,vmin=-1*cmax,cmap=mpl.cm.__dict__[cmap_name],extent=[0,vecs[0],0,vecs[1]])
+				im = ax.imshow(datas[tag][sn]['cf'].T,origin='lower',interpolation='nearest',vmax=cmax,vmin=-1*cmax,cmap=mpl.cm.__dict__[cmap_name],extent=[0,vecs[0],0,vecs[1]])
 				mean_trial = datas[tag][sn]['drop_gaussians_points'].transpose(1,0,2).mean(axis=0)
 				ax.scatter(*mean_trial.T,s=1,c='k')
 				ax.set_title('average field')
@@ -138,7 +156,10 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				ax.set_title('neighborhood, dynamic')
 			#---PLOT the average height
 			if 'average_height' in viewnames:
-				mesh = data[undulations_name][sn]['data']['mesh']
+				#! updating for new data.this: mesh = data[undulations_name][sn]['data']['mesh']
+				#!   note that we could make the data-lookup-by-key mimic the above with the below
+				data.set(undulations_name)
+				mesh = data.this[sn]['mesh']
 				surf = mesh.mean(axis=0).mean(axis=0)
 				surf -= surf.mean()
 				hmax = np.abs(surf).max()
@@ -147,8 +168,11 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 					interpolation='nearest',cmap=mpl.cm.__dict__['RdBu_r'],
 					extent=[0,vecs[0],0,vecs[1]],vmax=hmax,vmin=-1*hmax)
 				try: mean_prot_pts = postdat[sn]['points_protein_mean'][:,:2]
-				except: mean_prot_pts = data[protein_abstractor_name][sn][
-					'data']['points'].mean(axis=0)[:,:2]
+				except: 
+					#mean_prot_pts = protein_abstractor_name[sn][
+					#	'data']['points'].mean(axis=0)[:,:2]
+					data.set(protein_abstractor_name)
+					mean_prot_pts = data.this[sn]['points'].mean(axis=0)[:,:2]
 				plothull(ax,[mean_prot_pts],griddims=datas[tag][sn]['cf'].shape,vecs=vecs,c='k',lw=0)
 				# data[protein_abstractor_name][sn]['data']['points_all'].mean(axis=0)[...,:2]
 				ax.set_title('height profile')
@@ -177,6 +201,7 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 					vmax=cmax,vmin=-1*cmax,cmap=mpl.cm.__dict__[cmap_name],
 					extent=[-vecs[0],2*vecs[0],-vecs[1],2*vecs[1]])
 				ax.set_title('curvature field (max %.3f)'%cmax_instant)
+				report[(sn,tag)]['max_curvature'] = cmax_instant
 				add_colorbar(ax,im,title=r'$\mathrm{C_0\,({nm}^{-1})}$')
 			#---PLOT periodic view of the average height
 			if 'average_height_pbc' in viewnames:
@@ -187,11 +212,14 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				ax.set_title('average height')
 				add_colorbar(ax,im,title=r'$\mathrm{\langle z \rangle}$')
 				#---track the protein
-				protein_pts = data[protein_abstractor_name][sn]['data']['points_all']
+				#! more detran changes for updated omnicalc: protein_pts = data[protein_abstractor_name][sn]['data']['points_all']
+				data.set(protein_abstractor_name)
+				protein_pts = data.this[sn]['points_all']
 				#### if protein_pts.shape[1]!=1: raise Exception('only one protein')
 				prot_traj = protein_pts[:,0].mean(axis=1)[:,:2]
 				#### more proteins
-				prot_traj = np.concatenate(data[protein_abstractor_name][sn]['data']['points_all'].mean(axis=0)[...,:2])
+				#!prot_traj = np.concatenate(data[protein_abstractor_name][sn]['data']['points_all'].mean(axis=0)[...,:2])
+				prot_traj = np.concatenate(data.this[sn]['points_all'].mean(axis=0)[...,:2])
 				for shift in np.concatenate(np.transpose(np.meshgrid([-1,0,1],[-1,0,1])))*vecs[:2]:
 					ax.scatter(prot_traj[:,0]+shift[0],prot_traj[:,1]+shift[1],c='k',s=1)
 				ax.set_xlim((-vecs[0],2*vecs[0]))
@@ -228,6 +256,7 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				ax.set_xlim(min(qs),hicut)
 				error = datas[tag][sn]['bundle'][sn]['fun']
 				ax.set_title('spectrum (error %.5f)'%error)
+				report[(sn,tag)]['error'] = error
 			#---PLOT average height profile RELATIVE TO THE PROTEIN POSITION
 			if 'average_height_center' in viewnames:
 				mesh = data[undulations_name][sn]['data']['mesh']
@@ -297,9 +326,14 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				ax.tick_params(axis='x',which='both',bottom='off',top='off',labelbottom='on')
 				ax.tick_params(axis='y',which='both',left='off',right='off',labelbottom='off')
 			#---the metadata for this plot comes from the design section
-			try: meta = calcs[tag][sn]['calcs']['specs']['specs']
+			#! new data structures try: meta = calcs[tag][sn]['calcs']['specs']['specs']
+			#! note meta is bad right now because it includes the rest of the loop so if you change it
+			#!   this can be a problem if you later change the loop
+			meta = work.metadata.calculations['curvature_undulation_coupling_dex']['specs']
 			#---! custom upstream calculations for e.g. dextran project put the specs one level down
-			except: meta = calcs[tag][sn]['calcs']['specs']
+			#! new data structure except: meta = calcs[tag][sn]['calcs']['specs']
 			#---add high cutoff (from fitting parameters if defined) to the meta
 			meta['high_cutoff'] = hicut
+			meta['design_tag'] = tag
 			picturesave('fig.%s.%s'%(out_fn,sn),work.plotdir,backup=False,version=True,meta=meta)
+	return report 

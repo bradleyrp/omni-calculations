@@ -12,16 +12,17 @@ if 0:
 	import codes.curvature_coupling.tools as cctools
 	import scipy
 	import scipy.optimize
+else:
+	import importlib,re
+	import numpy as np
+	import scipy
+	import scipy.optimize
 
-import importlib,re
-import numpy as np
-import scipy
-import scipy.optimize
+	import ortho
+	from ortho import status
+	from omni import basic_compute_loop
 
-from ortho import status
-from omni import basic_compute_loop
-
-import codes.curvature_coupling.tools as cctools
+	import calcs.codes.curvature_coupling.tools as cctools
 
 machine_eps = eps = np.finfo(float).eps
 
@@ -96,6 +97,24 @@ class InvestigateCurvature:
 			if not len(self.sns)==1: raise Exception('you can only have one simulation name in single_mode')
 			self.data_prot_incoming = {self.sns[0]:{'data':self.data_prot_incoming}}
 			self.data = {self.sns[0]:{'data':self.data}}
+
+		#! special hack here for mesoscale
+		for sn in self.sns:
+			if self.work.meta.get(sn,{}).get('frames_realign',True):
+				# do nothing if we have a string for prot data, in the case of pixel_method_only
+				if isinstance(self.data_prot_incoming[sn]['data'],ortho.str_types): continue
+				nframes_ng = len(self.data_prot_incoming[sn]['data']['points_all'])
+				nframes_mem = self.data[sn]['data']['nframes']
+				#! this was previously mismarked with leq instead of less than
+				if nframes_ng<nframes_mem:
+					raise Exception('alignment error')
+				factor = float(nframes_ng)/nframes_mem
+				reindex = np.round(np.arange(nframes_mem)*factor).astype(int)
+				#! if you want to check the over- or under-estimation see this
+				#! reindex.astype(float)/factor-np.arange(nframes_mem)
+				self.data_prot_incoming[sn]['data']['points_all'] = \
+					self.data_prot_incoming[sn]['data']['points_all'][reindex]
+
 		#---the following loaders allow you to manipulate incoming data. defaults are provided however we 
 		#---...strongly recommend that you retain the specification in the yaml file in case you change it,
 		#---...so that omnicalc can distinguish different trials. obviously omnicalc cannot track changes
@@ -234,7 +253,8 @@ class InvestigateCurvature:
 				vecs = self.memory[(sn,'vecs')]
 				vecs_mean = np.mean(vecs,axis=0)
 				#---for each frame, map the ref_grid onto the principal axis
-				self.nframes = len(points_all)
+				#! self.nframes = len(points_all)
+				self.nframes = len(vecs)
 				points = np.zeros((len(ref_grid),self.nframes,2))
 				for fr in range(self.nframes):
 					pts = points_all[fr].mean(axis=0)[:,:2]
@@ -244,8 +264,10 @@ class InvestigateCurvature:
 					direction = 1.0-2.0*(np.cross(vecnorm(average_axis),[1.0,0.0])<0)
 					ref_grid_rot = rotate2d(ref_grid,direction*angle)+offset
 					#---handle PBCs by putting everything back in the box
-					ref_grid_rot_in_box = (ref_grid_rot + 
+					try: ref_grid_rot_in_box = (ref_grid_rot + 
 						(ref_grid_rot<0)*vecs[fr,:2] - (ref_grid_rot>=vecs[fr,:2])*vecs[fr,:2])
+					except:
+						import ipdb;ipdb.set_trace()
 					points[:,fr] = ref_grid_rot_in_box
 				#---debug with a plot if desired
 				if False:
@@ -414,6 +436,7 @@ class InvestigateCurvature:
 				raise Exception('objective_residual function must return a scalar')
 			fit = scipy.optimize.minimize(objective,
 				x0=tuple(initial_conditions),method='SLSQP',callback=callback)
+			#! protect aagainst failure after a very long time waiting
 			try: 
 				#---package the result
 				bundle[sn] = dict(fit,success=str(fit.success))

@@ -37,7 +37,11 @@ def import_readymade_meso_v1_nanogel(**kwargs):
 	#---...the entire nanogel or each bead can be labelled as a hotspot (or a separate step can identify the #---...most-contacting hotspots). any further specificity in the dropped gaussians would require 
 	#---...additional explication
 	if mapping_style=='single_inducer':
-		#---reformulate the points so the dimensions are frames by 1 by beads by 3 (xyz)
-		result['points_all'] = np.transpose([points],(1,0,2,3))
+		# assume beads if no flags in meta
+		if work.meta.get(sn,{}).get('rigid_sphere_nanogel_dat',False):
+			import ipdb;ipdb.set_trace()
+		else:
+			#---reformulate the points so the dimensions are frames by 1 by beads by 3 (xyz)
+			result['points_all'] = np.transpose([points],(1,0,2,3))
 	else: raise Exception('invalid mapping_style %s'%mapping_style)
 	return result,attrs	
