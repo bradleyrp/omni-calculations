@@ -69,7 +69,7 @@ def add_colorbar(ax,im,title,title_top=True):
 	cbar = plt.colorbar(im,cax=axins,orientation="vertical")
 	if not title_top: axins.set_ylabel(title,rotation=270,labelpad=20)
 	else: cbar.set_label(title,labelpad=-20,y=1.1,rotation=0)
-	axins.tick_params(axis='y',left='off',right='off',labelright='on')
+	axins.tick_params(axis='y',left=False,right=False,labelright=True)
 
 def plot_hull_and_trial_centers(data,sn,ax,n_instances=None,debug_frame=0,color=None):
 	"""Plot the protein hull along with the positions of the trial functions."""
@@ -82,13 +82,13 @@ def plot_hull_and_trial_centers(data,sn,ax,n_instances=None,debug_frame=0,color=
 	pts = np.concatenate(trials[samples])
 	for ptsnum,pts in enumerate(trials[samples]):
 		color_this = mpl.cm.__dict__['jet'](float(ptsnum)/len(samples)) if not color else color
-		ax.scatter(*pts.T,s=1,c=color_this)
+		ax.scatter(*pts.T,s=1,c=[color_this])
 	griddims = data[sn]['cf'].shape
 	vecs,points_protein = [postdat[sn][i] for i in ['vecs','points_protein']]
 	for ptsnum,pts in enumerate(points_protein[samples][...,:2]):
 		color_this = mpl.cm.__dict__['jet'](float(ptsnum)/len(samples)) if not color else color
 		#! some of the trial points for dextran have only one point
-		try: plothull(ax,pts,griddims=griddims,vecs=vecs,lw=0,c=color_this)
+		try: plothull(ax,pts,griddims=griddims,vecs=vecs,lw=0,c=[color_this])
 		except:
 			pass
 	ax.set_xlim((0,vecs[0]))
@@ -323,8 +323,8 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				plothull_protein_center_average(ax,sn,vecs,tag)
 			#---no tick marks on anything
 			for ax in axes:
-				ax.tick_params(axis='x',which='both',bottom='off',top='off',labelbottom='on')
-				ax.tick_params(axis='y',which='both',left='off',right='off',labelbottom='off')
+				ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=False)
+				ax.tick_params(axis='y',which='both',left=False,right=False,labelbottom=False)
 			#---the metadata for this plot comes from the design section
 			#! new data structures try: meta = calcs[tag][sn]['calcs']['specs']['specs']
 			#! note meta is bad right now because it includes the rest of the loop so if you change it

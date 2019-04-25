@@ -220,16 +220,16 @@ calculations:
               method: fixed_isotropic
               extent: 20.0
             curvature_sum: mean
-          v6:
-            style: wilderness
-            curvature_positions: 
-              method: neighborhood
-              distance_cutoff: 100.0
-              spacer: 20.0
-            extents:
-              method: fixed_isotropic
-              extent: 10.0
-            curvature_sum: mean
+          #! v6:
+          #!   style: wilderness
+          #!   curvature_positions: 
+          #!     method: neighborhood
+          #!     distance_cutoff: 100.0
+          #!     spacer: 20.0
+          #!   extents:
+          #!     method: fixed_isotropic
+          #!     extent: 10.0
+          #!   curvature_sum: mean
 plots:
   # read the membrane interpolation and compute undulation spectra
   undulations:
@@ -259,9 +259,8 @@ plots:
     script: dextran_undulation_review.py
     collections: all
     calculation: 
-      curvature_undulation_coupling_dex:
-        #! select v3, v4, v5 before running the analysis
-        design: v5
+      #! curvature_undulation_coupling_dex:
+      #!   design: v5
       import_readymade_meso_v1_nanogel: {}
       import_readymade_meso_v1_membrane: {}
     specs:
