@@ -16,8 +16,13 @@ import calcs
 from calcs.codes.curvature_coupling.curvature_coupling_plots \
 import individual_reviews_plotter
 from omni.base.tools import gopher
-from ortho import delve
+from ortho import delve,treeview
 import copy
+import pandas as pd
+import numpy as np
+
+# no plots by default
+control.routine = []
 
 # keys for the specs file
 plotname = 'curvature_undulation_coupling'
@@ -44,7 +49,6 @@ plotspec = {
 		'viewnames':['average_height_center','curvature_field_center',
 		'coupling_review.simple'],
 		'figsize':(8,8),'horizontal':True,'wspace':0.7},}
-
 
 @loader
 def load():
@@ -113,6 +117,7 @@ def plot_results(tag,plotspec):
 	# save the report
 	return report
 
+@autoplot
 def plot_recap(report):
 	"""
 	Bar plots of curvature and error across hypotheses.
@@ -169,6 +174,7 @@ def plot_recap(report):
 			ax.set_ylim((0,maxes[item]))
 	picturesave('fig.summary',work.plotdir,backup=False,version=True,meta={})
 
+@function
 def make_images_and_report():
 	"""Make all images and summary bar plot."""
 	global plotspec
@@ -182,13 +188,34 @@ def make_images_and_report():
 	plot_recap(report=report)
 	return report
 
-if __name__=='__main__':
+def package_ucc(dat,sns):
+	"""
+	Organize the results from one hypothesis.
+	"""
+	# prepare summary
+	# the kappa and gamma (or sigma) are the first two values of the fit ('x')
+	params = dict([(sn,dict(list(zip(('kappa','gamma'),
+		dat[sn]['x'][:2])))) for sn in sns])
+	fits = pd.DataFrame(params).T
+	print('status Fitted parameters are stored in `fits`:')
+	print(fits)
+	print(('status Instantaneous curvature fields are '
+		'stored in the dict `c0` while average fields are in `c0_avg` '
+		'which can be saved from the terminal'))
+	c0_avg,c0 = [dict([(sn,
+		dat[sn][key])
+		for sn in sns])
+		for key in ['cf','cf_first']]
+	qs =  dict([(sn,dat[sn]['qs']) for sn in sns])
+	energy =  dict([(sn,dat[sn]['ratios']) for sn in sns])
+	# all results are keyed by simulation name
+	return dict(c0_avg=c0_avg,c0=c0,fits=fits,qs=qs,energy=energy)
 
-	# to remake images delete the report otherwise they are only made once
-	if 'report' not in globals(): report = make_images_and_report()
-
-	kwargs = {}
-
+def calculate_entropy(*args,**kwargs):
+	"""
+	Compute the entropy with wavevectors and corresponding energies.
+	Requires inputs from curvature-undulation coupling.
+	"""
 	kB = 1.38E-23
 	temp = 300.00
 	mass = 5.5E-22
@@ -196,23 +223,58 @@ if __name__=='__main__':
 	Area_mem = 0.25E-12
 	my_const = 3.1415
 
-
-	if len(args)!=2: raise Exception('arguments list must be two items long: qs and energies')
+	if len(args)!=2: 
+		raise Exception('arguments list must be two items long: qs,energies')
 	high_cutoff = kwargs.pop('high_cutoff',1.0)
 	kappa,sigma = kwargs.pop('kappa'),kwargs.pop('sigma')
 	if kwargs: raise Exception('unprocessed kwargs: %s'%kwargs)
-	#---the wavevectors and corresponding energies are the arguments
+	# the wavevectors and corresponding energies are the arguments
 	qs,energy = args
-	freq, oper = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+	freq,oper = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
 	nqs = len(qs)
 	for j in range(0,nqs):
 		if qs[j] > 0.0:
 			freq[j] = np.sqrt(Area_mem*(kappa*qs[j]**4+sigma*qs[j]**2))/np.pi
 			oper[j] = freq[j]*Plank/(kB*temp)
-
 	Entropy_term = 0.0
 	for j in range (0,nqs):
-	if qs[j] > 0.0:
-	Entropy_term += (oper[j]/(np.exp(oper[j])-1.0))-np.log(1.0-np.exp(-oper[j]))
+		if qs[j] > 0.0:
+			Entropy_term += (oper[j]/(
+				np.exp(oper[j])-1.0))-np.log(1.0-np.exp(-oper[j]))
+	Entropy = Entropy_term*kB*6.022140857E23 # j/K/mol
+	return Entropy
 
-	Entropy = Entropy_term*kB*6.022140857E23    # un j/K/mol
+if __name__=='__main__':
+
+	"""
+	USAGE
+	You can develop code here. Run it with `main` after saving the file.
+	Run `make_images_and_report` to remake images and summary bar plots.
+	"""
+
+	# prepare a readable set of hypotheses
+	contents,contents_full = {},{}
+	# the tags and specs are in sequence from unroll_loops
+	for tag,spec,stub in zip(tags,upstreams,upstreams_stubs):
+		contents[tag] = dict([(k,spec['specs'][k]) 
+			for k in ['design','fitting']])
+		contents_full[tag] = spec
+	# review the hypotheses
+	treeview(dict(hypotheses=contents))
+
+	# select a hypothesis by tag from the hypotheses dict
+	tag_this = 'v5'
+
+	# get the data from the undulation-curvature coupling object
+	data_ucc.set(select=contents_full[tag]['specs'])
+	dat = data_ucc.this
+	result = package_ucc(dat,sns)
+
+	# select a simulation
+	for sn in sns:
+		#! result is currently inf
+		entropy = calculate_entropy(
+			result['qs'][sn],
+			result['energy'][sn],
+			kappa=result['fits']['kappa'][sn],
+			sigma=result['fits']['gamma'][sn],)
