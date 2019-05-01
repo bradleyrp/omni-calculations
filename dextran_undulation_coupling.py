@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# vim: set ts=4 sts=4 sw=4 noet
 
 """
 Refactored undulation-curvature coupling (ucc) code circa 2019.04.15.
@@ -261,7 +262,7 @@ if __name__=='__main__':
 	"""
 
 	# ENTROPY METHOD 1 (set True to try this)
-	if False:
+	if 1:
 
 		# review the hypotheses
 		treeview(dict(hypotheses=contents))

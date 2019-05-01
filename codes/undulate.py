@@ -89,7 +89,8 @@ def undulation_fitter(q_raw,hqs,area,initial_conditions=(20.0,0.0),residual_form
 	return dict(fit,kappa=fit.x[0],gamma=fit.x[1])
 
 def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
-	perfect=False,raw=False,midplane_method=None,custom_heights=None,residual_form='log',fit_tension=False):
+	perfect=False,raw=False,midplane_method=None,custom_heights=None,
+	residual_form='log',fit_tension=False):
 	"""
 	Compute undulation spectrum.
 	"""
@@ -205,7 +206,7 @@ def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 		else: raise Exception('invalid fit_style %s'%fit_style)
 		#---return the data
 		packed.update(kappa=kappa,points=np.transpose((x3,y3)),sigma=gamma,
-			q_raw=x,energy_raw=y,q_binned=x2,energy_binned=y2,area=area)
+			q_raw=x,energy_raw=y,q_binned=x2,energy_binned=y2,area=area,fit_style=fit_style)
 
 	else: raise Exception('invalid fit_style %s'%fit_style)
 	return packed

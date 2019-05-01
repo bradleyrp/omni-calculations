@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# vim: set ts=4 sts=4 sw=4 noet
 
 from omni import WorkSpace
 import calcs
@@ -22,55 +23,8 @@ def load():
 
 if __name__=='__main__':
 
-	if False:
-
-		# wavevector limits
-		lims = (0.,1.0)
-
-		# select a simulation from sns
-		sn = 'CL160ENS-1'
-		# select a midplane method
-		midplane_method = [
-			'flat','average','average_normal',
-			][0]
-
-		if midplane_method=='average_normal':
-			data.set('undulations_average_normal')
-			dat = data.this[sn]
-			mesh = dat['mesh']
-			custom_heights = None
-		else: 
-			data.set('import_readymade_meso_v1_membrane')
-			dat = data.this[sn]
-			mesh = dat['mesh']
-			custom_heights = None
-
-		vecs = dat['vecs']
-		# assume bilayer, even if one mesh, then take the average
-		surf = np.mean(mesh,axis=0)
-		# kernel of this plot/calculation: calculate the spectra here
-		uspec = calculate_undulations(surf,vecs,chop_last=True,custom_heights=custom_heights,
-			perfect=True,lims=lims,raw=False,midplane_method=midplane_method)
-
-		layout = {'out':{'grid':[1,1]},'ins':[{'grid':[1,1]}]}
-		axes,fig = panelplot(layout,figsize=(8,8))
-		ax = axes[0]
-
-		kB = 1.38E-23
-		temp = 300.00
-		mass = 1.44E-22
-		area_mem = 0.25E-12 
-
-		kappa = uspec['kappa']
-		sigma = uspec['sigma']
-		qs = uspec['q_raw']
-		hqs = uspec['energy_raw']
-
-		w_q1 = np.sqrt(area_mem*(kappa*qs**4+sigma*qs**2)/mass)
-		w_q2 = np.sqrt(kB*temp/(hqs**2*mass)) 
-
-	#! from: edit ../../../retired/factory/calc/dextran/calcs/plot-dextran_analyze_undulations.py
-	if 1:
+	# BLOCK 0: RYAN IS WORKING ON THIS. THIS CODE MAKES ALL THE PANELS
+	if 0:
 
 		def calculate_undulations_wrapper(sn,**kwargs):
 			"""
@@ -193,3 +147,104 @@ if __name__=='__main__':
 			add_axgrid(ax,art=art)
 
 		picturesave('fig.undulation_survey',work.plotdir,backup=False,version=True,meta={})
+
+	# BLOCK 1: basic undulation fitting results
+	if 1:
+
+		# wavevector limits
+		lims = (0.,1.0)
+
+		results = {}
+		# loop over all simulations
+		for snum,sn in enumerate(sns):
+			status('calculating entropy for %s'%sn,i=snum,looplen=len(sns))
+
+			# select a midplane method
+			midplane_method = [
+				'flat','average','average_normal',
+				][0]
+
+			if midplane_method=='average_normal':
+				data.set('import_readymade_meso_v1_membrane')
+				dat = data.this[sn]
+				vecs = dat['vecs']
+				data.set('undulations_average_normal')
+				dat = data.this[sn]
+				surf = mesh = dat['average_normal_heights']
+				custom_heights = surf
+			else: 
+				data.set('import_readymade_meso_v1_membrane')
+				dat = data.this[sn]
+				mesh = dat['mesh']
+				custom_heights = None
+				vecs = dat['vecs']
+				# assume bilayer, even if one mesh, then take the average
+				surf = np.mean(mesh,axis=0)
+
+			# kernel of this plot/calculation: calculate the spectra here
+			uspec = calculate_undulations(surf,vecs,chop_last=True,custom_heights=custom_heights,
+				perfect=True,lims=lims,raw=False,midplane_method=midplane_method,
+				fit_style='band,perfect,curvefit',fit_tension=True)
+
+			# plot the hqhq
+			if 0:
+				layout = {'out':{'grid':[1,1]},'ins':[{'grid':[1,1]}]}
+				axes,fig = panelplot(layout,figsize=(8,8))
+				ax = axes[0]
+				hqhq = np.reshape(uspec['energy_raw'],(52,52))
+				im = ax.imshow(hqhq)
+				picturesave('fig.test',work.plotdir,backup=False,version=True,meta={})
+
+			# entropy calculation here
+
+			kB = 1.38E-23
+			temp = 300.00
+			mass = 1.44E-22
+			area_mem = 0.25E-12 
+			Plank = 6.62607015*10**-34
+
+			kappa = uspec['kappa']
+			sigma = uspec['sigma']
+			qs = uspec['q_raw']
+			hqs = hq2 = uspec['energy_raw']
+			hq2_square = np.reshape(hq2,surf.shape[1:])
+
+			#! an older code
+			if 0:
+				w_q1 = np.sqrt(area_mem*(kappa*qs**4+sigma*qs**2)/mass)
+				w_q2 = np.sqrt(kB*temp/(hq2**2*mass)) 
+
+			# CALCULATE ENTROPY
+			# code from 2019.04.26
+
+			freq1, oper1 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+			freq2, oper2 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+			nqs = len(qs)
+			for j in range(0,nqs):
+				if qs[j] > 0.0:
+					freq1[j] = np.sqrt(area_mem*(kappa*qs[j]**4+sigma*qs[j]**2)/mass)
+					oper1[j] = freq1[j]*Plank/(kB*temp)/(2*np.pi)
+
+			freq2[j] = np.sqrt(kB*temp/(hqs[j]**2*mass))
+			oper2[j] = freq2[j]*Plank/(kB*temp)/(2*np.pi)
+
+			Entropy_term_1 = 0.0
+			Entropy_term_2 = 0.0    
+
+			for j in range (0,nqs):
+				if qs[j] > 0.0:
+					Entropy_term_1 += (oper1[j]/(np.exp(oper1[j])-1.0))-np.log(1.0-np.exp(-oper1[j]))
+					Entropy_term_2 += (oper2[j]/(np.exp(oper2[j])-1.0))-np.log(1.0-np.exp(-oper2[j]))
+
+			Entropy_1 = Entropy_term_1*kB*6.022140857E23    # un j/K/mol
+			Entropy_2 = Entropy_term_2*kB*6.022140857E23    # un j/K/mol        
+
+			# save the results here
+			results[sn] = dict(
+				kappa=uspec['kappa'],
+				sigma=uspec['sigma'],
+				Entropy_1=Entropy_1,
+				Entropy_2=Entropy_2,
+			)
+
+			#^^^ we are here right now
