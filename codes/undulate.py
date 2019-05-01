@@ -4,6 +4,7 @@ import re
 import numpy as np
 import scipy
 import scipy.optimize
+#! from base.tools import status
 from ortho import status
 
 machine_eps = eps = np.finfo(float).eps
@@ -204,7 +205,7 @@ def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 		else: raise Exception('invalid fit_style %s'%fit_style)
 		#---return the data
 		packed.update(kappa=kappa,points=np.transpose((x3,y3)),sigma=gamma,
-			q_raw=x,energy_raw=y,q_binned=x2,energy_binned=y2)
+			q_raw=x,energy_raw=y,q_binned=x2,energy_binned=y2,area=area)
 
 	else: raise Exception('invalid fit_style %s'%fit_style)
 	return packed

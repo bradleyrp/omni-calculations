@@ -8,6 +8,7 @@ from calcs.codes.undulate_plot import undulation_panel
 import numpy as np
 from ortho import sweeper,status
 from omni.legacy.panels import panelplot
+from omni.base.store import picturesave
 import re
 
 # keys for the specs file
@@ -84,7 +85,10 @@ if __name__=='__main__':
 			if kwargs: raise Exception('unprocessed kwargs %s'%kwargs)
 
 			if midplane_method=='average_normal': 
-				custom_heights = data_average_normal[sn]['data']['average_normal_heights']
+				data.set('undulations_average_normal')
+				data_average_normal = data.this
+				#! custom_heights = data_average_normal[sn]['data']['average_normal_heights']
+				custom_heights = data_average_normal[sn]['average_normal_heights']
 			else: custom_heights = None
 			#! updating for datapacK dat = data[sn]['data']
 			data.set('import_readymade_meso_v1_membrane')
