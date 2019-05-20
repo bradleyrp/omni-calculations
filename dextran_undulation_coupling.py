@@ -17,11 +17,14 @@ from omni import WorkSpace
 import calcs
 from calcs.codes.curvature_coupling.curvature_coupling_plots \
 import individual_reviews_plotter
+from calcs.codes.undulate import calculate_undulations
 from omni.base.tools import gopher
 from ortho import delve,treeview
 import copy
 import pandas as pd
 import numpy as np
+from ortho import status
+
 
 # no plots by default
 control.routine = []
@@ -225,6 +228,7 @@ def calculate_entropy(*args,**kwargs):
 	Compute the entropy with wavevectors and corresponding energies.
 	Requires inputs from curvature-undulation coupling.
 	"""
+	# previous method, predates the one coded in __main__ below
 	kB = 1.38E-23
 	temp = 300.00
 	mass = 5.5E-22
@@ -276,6 +280,9 @@ if __name__=='__main__':
 		result = package_ucc(dat,sns)
 
 		# select a simulation
+		#! note that this uses the original entropy function above
+		#!   this was replaced with the entropy method below on 2019.05.12
+		#!   and that function was added to dextran_undulation.py on 2019.04.26
 		for sn in sns:
 			#! result is currently inf
 			entropy = calculate_entropy(
@@ -284,9 +291,136 @@ if __name__=='__main__':
 				kappa=result['fits']['kappa'][sn],
 				sigma=result['fits']['gamma'][sn],)
 
-	"""
-	STATUS
-	you can get a kappa and sigma along with the curvature above
-	however see `make go script=calcs/dextran_undulation.py
-	for the curvature-free fits which should roughly match these
-	"""
+		# entropy calculation starts here
+		# this mimics the version in dextran_undulation.py from 2019.04.26
+		# that script gets uspec from a function called calculate_undulations
+		# we populate uspec here, from the curvature coupling data
+		#! note result is populated above while results are populated below, to
+		#!   match dextran_undulation.py
+		results = {}
+		for snum,sn in enumerate(sns):
+			status('calculating entropy for %s'%sn,i=snum,looplen=len(sns))
+
+			"""
+			Notes on implementation:
+			At this point we are getting the variable "result" from data_ucc.
+			The data_ucc contains the undulation coupling results which contain the fitted kappa and sigma. However, that method is fitting the energy (and not the hqhq). The following construction of uspec is designed to mimic the result of a calculate_undulation function used in the dextran_undulation.py code. It puts the data in the same exact structure used by the two entropy calculations below. After we build it, we are going to replace energy_raw, which is an energy value optimized to match kBT, with the hqs, because the entropy calculation needs the hqs and not the energy.
+			"""
+			uspec = dict(q_raw=result['qs'][sn],
+				energy_raw=result['energy'][sn],
+				kappa=result['fits']['kappa'][sn],
+				sigma=result['fits']['gamma'][sn])
+
+			### INTERVENTION
+			"""
+			this code was taken from dextran_undulation.py and provides the hqs directly
+			BE CAREFUL THAT YOU ARE ONLY COMPARING THE SAME midplane_method!
+			"""
+			# wavevector limits
+			lims = (0.,1.0)
+			# select a midplane method
+			midplane_method = [
+				'flat','average','average_normal',
+				][0]
+
+			if midplane_method=='average_normal':
+				data.set('import_readymade_meso_v1_membrane')
+				dat = data.this[sn]
+				vecs = dat['vecs']
+				data.set('undulations_average_normal')
+				dat = data.this[sn]
+				surf = mesh = dat['average_normal_heights']
+				custom_heights = surf
+			else: 
+				data.set('import_readymade_meso_v1_membrane')
+				dat = data.this[sn]
+				mesh = dat['mesh']
+				custom_heights = None
+				vecs = dat['vecs']
+				# assume bilayer, even if one mesh, then take the average
+				surf = np.mean(mesh,axis=0)
+
+			if 1: surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
+
+			# kernel of this plot/calculation: calculate the spectra here
+			uspec_no_coupling = calculate_undulations(surf,vecs,chop_last=True,
+				custom_heights=custom_heights,
+				perfect=True,lims=lims,raw=False,midplane_method=midplane_method,
+				fit_style='band,perfect,curvefit',fit_tension=True)
+			# note that this value is called "energy_raw" but it is really hqs
+			#!!! correct this nomenclature error
+			wrong_method = False
+			if not wrong_method: uspec['energy_raw'] = uspec_no_coupling['energy_raw']
+			### END INTERVENTION
+
+			kB = 1.38E-23
+			temp = 300.00
+			mass = 5.5E-22
+			area_mem = 0.25E-12 
+			Plank = 6.62607015*10**-34
+
+			# note that uspec includes the zeroth mode which we omit
+			#   this is necessary to match the method from 
+			#   dextran_undulation_coupling.py
+			kappa = uspec['kappa']
+			sigma = uspec['sigma']
+			qs = uspec['q_raw']
+			hqs = hq2 = uspec['energy_raw']
+			"""
+			# add back the zero mode:
+			The above is deprecated. You added the zero mode because the energy value coming from the coupling code had dropped the zero mode but we need the hqs anyway, not the energy, hence we skip this step.
+			"""
+			if wrong_method:
+				hqs = hq2 = np.concatenate(([0.],hqs))
+				qs = np.concatenate(([0.,],qs))
+				square_dim = np.sqrt(qs.shape)[0]
+				if square_dim.astype(int)!=square_dim:
+					raise Exception('dimension error! data might not be square '
+						'because we have %s items'%qs.shape)
+				else: square_dim = square_dim.astype(int)
+				nx,ny = (square_dim,square_dim)
+				hq2_square = np.reshape(hq2,(nx,ny))
+
+			#! an older code
+			if 0:
+				w_q1 = np.sqrt(area_mem*(kappa*qs**4+sigma*qs**2)/mass)
+				w_q2 = np.sqrt(kB*temp/(hq2**2*mass)) 
+
+			# CALCULATE ENTROPY
+			# code from 2019.04.26
+
+			freq1, oper1 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+			freq2, oper2 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+			nqs = len(qs)
+			for j in range(0,nqs):
+				if qs[j] > 0.0:
+					freq1[j] = np.sqrt(area_mem*(
+							kappa*kB*temp*qs[j]**4*10**36+
+							sigma*kB*temp*qs[j]**2*10**36)/mass)
+					oper1[j] = freq1[j]*Plank/(kB*temp)/(2*np.pi)
+					freq2[j] = np.sqrt(kB*temp/(hqs[j]*10**-18*mass))
+					oper2[j] = freq2[j]*Plank/(kB*temp)/(2*np.pi)
+
+			Entropy_term_1 = 0.0
+			Entropy_term_2 = 0.0    
+
+			for j in range (0,nqs):
+				if qs[j] > 0.0:
+					Entropy_term_1 += (oper1[j]/(
+						np.exp(oper1[j])-1.0))-np.log(1.0-np.exp(-oper1[j]))
+					Entropy_term_2 += (oper2[j]/(
+						np.exp(oper2[j])-1.0))-np.log(1.0-np.exp(-oper2[j]))
+
+			Entropy_1 = Entropy_term_1*kB*6.022140857E23    # un j/K/mol
+			Entropy_2 = Entropy_term_2*kB*6.022140857E23    # un j/K/mol        
+
+			# save the results here
+			results[sn] = dict(
+				kappa=uspec['kappa'],
+				sigma=uspec['sigma'],
+				Entropy_1=Entropy_1,
+				Entropy_2=Entropy_2,
+			)
+
+		### NOTE! Ryan is checking to see why the zeroth mode is not zero in dextran_undulation.py!

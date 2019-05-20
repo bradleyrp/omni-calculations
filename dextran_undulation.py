@@ -51,11 +51,15 @@ if __name__=='__main__':
 			vecs = dat['vecs']
 			surf = np.mean(dat['mesh'],axis=0)
 
+			#! when prepping the data structure you cannot forget to remove the zero mode!
+			#!   this was an oversight until we noticed a nonzero zeroth mode
+			surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+				(surf.shape[0],surf.shape[1])).transpose((2,0,1))
+
 			uspec = calculate_undulations(surf,vecs,
 				fit_style=fit_style,custom_heights=custom_heights,lims=lims,
 				midplane_method=midplane_method,residual_form=residual_form,fit_tension=fit_tension)
 			return uspec
-
 
 		#! more imports
 		from omni.plotter.panels import square_tiles
@@ -181,6 +185,9 @@ if __name__=='__main__':
 				# assume bilayer, even if one mesh, then take the average
 				surf = np.mean(mesh,axis=0)
 
+			if 0: surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
+
 			# kernel of this plot/calculation: calculate the spectra here
 			uspec = calculate_undulations(surf,vecs,chop_last=True,custom_heights=custom_heights,
 				perfect=True,lims=lims,raw=False,midplane_method=midplane_method,
@@ -199,7 +206,7 @@ if __name__=='__main__':
 
 			kB = 1.38E-23
 			temp = 300.00
-			mass = 1.44E-22
+			mass = 5.5E-22
 			area_mem = 0.25E-12 
 			Plank = 6.62607015*10**-34
 
@@ -207,7 +214,13 @@ if __name__=='__main__':
 			sigma = uspec['sigma']
 			qs = uspec['q_raw']
 			hqs = hq2 = uspec['energy_raw']
-			hq2_square = np.reshape(hq2,surf.shape[1:])
+			square_dim = np.sqrt(qs.shape)[0]
+			if square_dim.astype(int)!=square_dim:
+				raise Exception('dimension error! data might not be square '
+					'because we have %s items'%qs.shape)
+			else: square_dim = square_dim.astype(int)
+			nx,ny = (square_dim,square_dim)
+			hq2_square = np.reshape(hqs,(nx,ny))
 
 			#! an older code
 			if 0:
@@ -222,11 +235,10 @@ if __name__=='__main__':
 			nqs = len(qs)
 			for j in range(0,nqs):
 				if qs[j] > 0.0:
-					freq1[j] = np.sqrt(area_mem*(kappa*qs[j]**4+sigma*qs[j]**2)/mass)
+					freq1[j] = np.sqrt(area_mem*(kappa*kB*temp*qs[j]**4*10**36+sigma*kB*temp*qs[j]**2*10**36)/mass)
 					oper1[j] = freq1[j]*Plank/(kB*temp)/(2*np.pi)
-
-			freq2[j] = np.sqrt(kB*temp/(hqs[j]**2*mass))
-			oper2[j] = freq2[j]*Plank/(kB*temp)/(2*np.pi)
+					freq2[j] = np.sqrt(kB*temp/(hqs[j]*10**-18*mass))
+					oper2[j] = freq2[j]*Plank/(kB*temp)/(2*np.pi)
 
 			Entropy_term_1 = 0.0
 			Entropy_term_2 = 0.0    
@@ -247,4 +259,23 @@ if __name__=='__main__':
 				Entropy_2=Entropy_2,
 			)
 
-			#^^^ we are here right now
+			### NOTE! Ryan is checking to see why the zeroth mode is not zero in dextran_undulation.py!
+
+	#! checking the zeroth mode
+	if 0:
+		import matplotlib as mpl;import matplotlib.pyplot as plt
+		fig = plt.figure()
+		ax = fig.add_subplot(111)
+		ax.plot(qs[1:],hqs[1:],'o')
+		ax.set_xscale('log')
+		ax.set_yscale('log')
+		picturesave(work.plotdir+'/debug-zero-mode-hqs-correct.png')
+
+	#! checking the zeroth mode
+	if 0:
+		import matplotlib as mpl;import matplotlib.pyplot as plt
+		fig = plt.figure()
+		ax = fig.add_subplot(111)
+		ax.imshow(surf[0].T,interpolation='nearest',origin='lower')
+		picturesave(work.plotdir+'/debug-zero-mode-image.png')
+
