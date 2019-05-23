@@ -30,7 +30,7 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 	sn = kwargs['sn']
 	work = kwargs['workspace']
 	calc = kwargs['calc']
-	debug = kwargs.get('debug',False)
+	debug = kwargs.get('debug',True)
 	run_parallel = kwargs.get('run_parallel',True)
 
 	# prototyping an external module import to replace the sometimes tedious addition of 
@@ -114,8 +114,7 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 		for molname in protein_itp.molecules:
 			# mimic the procedure above for lipids
 			# donor names come from a double-regex match over bonds
-			donor_resnames_names = protein_itp.get_bonds_by_regex(molname=molname,
-				patterns=['^H','^(N|O|S)'],include_resname=True)
+			donor_resnames_names = list(protein_itp.get_bonds_by_regex(molname=molname,patterns=['^H','^(N|O|S)'],include_resname=True))
 			# organize hydrogen bonds by residue name
 			resnames_all = list(set([i for j in list(zip(*donor_resnames_names))[0] for i in j]))
 			for resname_focus in resnames_all:
@@ -133,7 +132,6 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 					and i['resname']==resname_focus]))
 				hydrogen_bond_ref[(molname,resname_focus)] = {
 					'acceptors':acceptor_names,'donors':donor_list}
-
 	"""
 	developing a new method for selecting the atoms correctly
 	we need to get all possible donors into a big selection after which case the hbonds.hbonder_framewise
@@ -215,9 +213,10 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 	# debug
 	if debug:
 		fr = 686 # careful debugging at this frame
+		fr = 9
 		incoming = hbonds.hbonder_framewise(fr,distance_cutoff=distance_cutoff,angle_cutoff=angle_cutoff)
 		import ipdb;ipdb.set_trace()
-		sys.quit()
+		sys.exit(1)
 
 	# parallel compute
 	out_args = {'distance_cutoff':distance_cutoff,'angle_cutoff':angle_cutoff}

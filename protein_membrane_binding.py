@@ -37,7 +37,7 @@ class SaltBridge:
 	#! see also 
 		https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6016756/
 	> Salt-bridge and aromatic-aromatic bond calculation
-	>Positively charged atoms are Lys NZ1, Arg NH1, Arg NH2 and His NE2. 
+	> Positively charged atoms are Lys NZ1, Arg NH1, Arg NH2 and His NE2. 
 	Negatively charged atoms are Asp OD1, Asp OD2, Glu OE1, Glu OE2. A salt 
 	bridge is defined if two oppositely charged atoms lie within 4A across the 
 	interface. A pi-pi interaction is defined between two aromatic amino acids 
@@ -56,7 +56,7 @@ class SaltBridge:
 	def __init__(self): pass
 	def filter_salt_bridges_protein(self,bonds,rowspec):
 		"""Filter a bonds list for salt bridges."""
-		# search should be fast because it is composed of a bunch of filters on bonds
+		# search should be fast because it is composed of filters on bonds
 		#! however there are many combinations. are there ways to improve?
 		subject_target_combos = [['subject','target'],['target','subject']]
 		salt_filter = np.any([
@@ -202,6 +202,7 @@ def plot_protein_lipid_timeseries(sns,kind,scoring_method,**kwargs):
 	Plot a segmented timeseries of the current data bond type.
 	"""
 	cutoff = kwargs.get('cutoff',None)
+	merged = kwargs.get('merged',False)
 	global lipid_resnames
 	n_segments = kwargs.get('n_segments',20)
 	global data
@@ -230,10 +231,16 @@ def plot_protein_lipid_timeseries(sns,kind,scoring_method,**kwargs):
 		nrows=kwargs.get('nrows',1),ncols=kwargs.get('ncols',len(sns)),
 		**subplots_kwargs)
 	if subplots_adjust: plt.subplots_adjust(**subplots_adjust)
-	if not figplace: axes = [i for j in axes for i in j]
+	if not figplace:
+		#! causing problems
+		try: axes = [i for j in axes for i in j]
+		except:	pass
 	for snum,sn in enumerate(sns):
 		ax = get_ax(sn)
-		duration = data.extras[sn]['end']/1000.-data.extras[sn]['start']/1000.
+		#! selecting the first simulation
+		if not merged: sn_this = sn
+		else: sn_this = merge_rule[sn][0]
+		duration = data.extras[sn_this]['end']/1000.-data.extras[sn_this]['start']/1000.
 		zero = np.zeros(n_segments)
 		for lnum,lipid in enumerate(lipids_this):
 			if lipid not in counts[sn]: continue
@@ -280,6 +287,7 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 	figure_zoom = kwargs.get('figure_zoom',3.0)
 	# DIMENSION 1: simulations BY ROW
 	sns_this = sns
+	#! this is ill-advised!!!!
 	if kwargs.get('merged',False): sns_raw = work.sns()
 	else: sns_raw = sns
 	# unpack counts
@@ -409,10 +417,37 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 				for lipid in lipids_this:
 					if what in ['raw','reduce']:
 						# calculation for one small tile
-		
 						rowspec_this = data.this[sn_this]['defn_rowspec']
-						bonds = data.this[sn_this]['bonds']
-						obs = data.this[sn_this]['observations']
+						if kwargs.get('merged',False):
+							"""
+							MERGE SIMULATIONS HERE
+							Possible pitfall:
+							  What happens when you do reduced scoring and there is a bond between residue A and lipid 100 on one simulation and residue B and lipid 100 on the other? How would this appear in the score? We want these to be distinct bonds that are scored separately, but ideally we would just merge the obs and bonds so that this complicated loop is not perturbed. A better example is this: what if we have A-100 and A-100 in both simulations. This would only get scored as a single residue-lipid bond. I am dwelling on this because I would like to fix bonds and obs rather than complicate this loop any further. My initial impulse is to make a merged bond list and then collate the obs into new rows based on that. Now I am thinking it might be best to just cat the bond list and stack the obs so there are quadrants of zeros for each different simulation. This may have the same problem, however. The benefit of the latter method is that you have distinct frames with entirely distinct row numbers. The problem is that the rows get reduced at some point when we discard the atoms.
+							#!!!? should we scale the rate here because we have not catted things?
+							"""
+							#! cannot set this yet, because it is keyed by literal sn later:
+							#!   sns_this = merge_rule[sn]
+							#! obs = [data.this[i]['observations'] for i in merge_rule[sn]]
+							#! obs = data.this[sn_this]['observations']
+							obs = [data.this[i]['observations'] for i in merge_rule[sn]]
+							# get the dimensions (frames by unique bonds) for each simulation
+							n_rows,n_cols = np.array([i.shape for i in obs]).T
+							obs_merge = np.zeros((np.sum(n_rows),np.sum(n_cols)))
+							n_rows,n_cols = np.cumsum([np.concatenate([(0,),i]) 
+								for i in [n_rows,n_cols]],axis=1)
+							for ii,i in enumerate(n_rows[:-1]):
+								obs_merge[
+									n_rows[ii]:n_rows[ii+1],
+									n_cols[ii]:n_cols[ii+1],
+									] = obs[ii]
+							#! check: np.all(obs_merge[0:1501,0:1175]==obs[0]) 
+							obs = obs_merge
+							bonds = np.concatenate([data.this[i]['bonds'] for i in merge_rule[sn]])
+						# standard behavior
+						else: 
+							bonds = data.this[sn_this]['bonds']
+							obs = data.this[sn_this]['observations']
+						# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 						subject_is_resid = bonds[:,rowspec_this.index('subject_resid')]==str(resid)
 						target_is_lipid = bonds[:,rowspec_this.index('target_resname')]==lipid
 						if kind=='salt_bridges':
@@ -482,7 +517,7 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 			# +++ assume reduced otherwise note that the scoring method is explicit
 			if scoring_method=='explicit': scoring_method_tag = '.explicit'
 			else: scoring_method_tag = ''
-			if scale_counts==False: scale_counts_tag = '.unscaled'
+			if scale_counts==True: scale_counts_tag = '.scaled'
 			else: scale_counts_tag = ''
 			kind_tags = kwargs.get('kind_label',kind)+scoring_method_tag+scale_counts_tag
 			collection_name = kwargs.get('collection_name',None)
@@ -500,7 +535,7 @@ if __name__=='__main__':
 	"""
 	Note two styles for plot scripts: ones with @function decorators are 
 	useful for running a specific plot with one parameter and no arguments.
-	This script uses main to loop over many.
+	This script uses main to loop over many images.
 	"""
 
 	### COLLECT DATA
@@ -524,7 +559,7 @@ if __name__=='__main__':
 				'kind':'contacts','cutoff':cutoff,
 				'kind_label':'contacts_%s'%cutoff,
 				'scoring_method':scoring_method,
-				'scale_counts':True})
+				'scale_counts':False})
 
 	surveys = []
 	for scoring_method in ['explicit','reduced']:
@@ -534,12 +569,12 @@ if __name__=='__main__':
 			'cutoff':3.4,
 			'kind_label':'salt_bridges',
 			'scoring_method':scoring_method,
-			'scale_counts':True})
+			'scale_counts':False})
 		surveys.append({
 			'kind':'hydrogen_bonds',
 			'kind_label':'hydrogen_bonds',
 			'scoring_method':scoring_method,
-			'scale_counts':True})
+			'scale_counts':False})
 
 	def collect_post(**kwargs):
 		"""Perform post-processing."""
@@ -619,26 +654,35 @@ if __name__=='__main__':
 				that[sn_sup] = {}
 				for sname in sns_sub: 
 					for lipid in this[sname]:
-						if lipid not in that[sn_sup]: 
-							that[sn_sup][lipid] = np.array([])
-						# +++ merge rule: concatenate the frame list 
-						# we concatenate the frame list to accomodate histograms
-						#   while a timeseries could be merged via the mean
-						that[sn_sup][lipid] = np.concatenate((
-							that[sn_sup][lipid],this[sname][lipid]))
+						### TRY A DIFFERENT MERGE RULE
+						if False: # this is for the histograms
+							if lipid not in that[sn_sup]: 
+								that[sn_sup][lipid] = np.array([])
+							# +++ merge rule: concatenate the frame list 
+							# we concatenate the frame list to accomodate histograms
+							#   while a timeseries could be merged via the mean
+							that[sn_sup][lipid] = np.concatenate((
+								that[sn_sup][lipid],this[sname][lipid]))
+						else:
+							if lipid not in that[sn_sup]: 
+								that[sn_sup][lipid] = []
+							that[sn_sup][lipid].append(this[sname][lipid])
+			#! very hard to get this shit working correctly!!!
+			for sn_sup in that:
+				for lname in that[sn_sup]:
+					#!!! HACK
+					min_nframes = min([len(i) for i in that[sn_sup][lname]])
+					if min_nframes==0: raise Exception('hack oops')
+					that[sn_sup][lname] = np.mean([i[:min_nframes] for i in that[sn_sup][lname]],axis=0)
 			post.add(data=that,meta=meta_new)
+			#!!! want to refresh the above? set post.meta = [] and then run main
+			#!!!   actually maybe not? this isn't working
 
+	# debugging merged timeseries SEE THE ALTERNATE MERGE RULE ABOVE
 	if False:
-		#! previously		
-		# one plot, now with merged data
-		survey = {'merged':True,'cutoff':3.4,'kind':'salt_bridges','scoring_method':'explicit'}
-		extra = {'kind_label':'salt_bridges.merged'}
-		extra['merge_rule'] = merge_rule
-		#! note that you cannot include extra in survey because some meta do not
-		#!   have the merged value, hence they will also match properly. this design
-		#!   is worth considering in more detail
-		plot_protein_lipid_histograms(sns=post.get(**survey).keys(),
-			**dict(survey,**extra))
+		this = post.get(**{'kind': 'hydrogen_bonds', 'scoring_method': 'reduced', 'merged': True})['mdia2_20']['PI2P']
+		them = [post.get(**{'kind': 'hydrogen_bonds', 'scoring_method': 'reduced', 'merged': False})[sn]['PI2P'] for sn in ['mdia2bilayerphys','mdia2bilayerphys2']]
+		np.all(np.concatenate(them)==this) # true
 
 	### PLOT LOOP
 
@@ -646,7 +690,7 @@ if __name__=='__main__':
 	do_plot_histograms = 0
 	do_plot_timeseries = 0
 	do_summary_counter = 0
-	do_special = 1
+	do_special = 0
 
 	# customizations by plot style by collection
 	customize = {
@@ -672,10 +716,58 @@ if __name__=='__main__':
 		'figplace':lambda sn,nrows=9,ncols=3:
 			(sns_this.index(sn)%nrows,int(sns_this.index(sn)/nrows))}
 
+	### ONE-OFF demos!
+
+	#! another demo with the merged plots here in a single example
+	if False:
+		survey = {'merged':True,'cutoff':3.4,'kind':'salt_bridges','scoring_method':'explicit'}
+		extra = {'kind_label':'salt_bridges.merged'}
+		extra['merge_rule'] = merge_rule
+		#! note that you cannot include extra in survey because some meta do not
+		#!   have the merged value, hence they will also match properly. this design
+		#!   is worth considering in more detail
+		plot_protein_lipid_histograms(sns=post.get(**survey).keys(),
+			**dict(survey,**extra))
+	#! another demo
+	if 0:
+		survey = {'merged':True,'kind':'hydrogen_bonds','scoring_method':'reduced'}
+		extra = {'kind_label':'hydrogen_bonds.merged.mdia2'}
+		extra['merge_rule'] = merge_rule
+		#! note that you cannot include extra in survey because some meta do not
+		#!   have the merged value, hence they will also match properly. this design
+		#!   is worth considering in more detail
+		#! clumsy?
+		sns_this = [i for i in post.get(**survey).keys() if 'mdia2' in i]
+		plot_protein_lipid_histograms(sns=sns_this,
+			**dict(survey,**extra))
+	#! another demo
+	if 0:
+		surveys = []
+		survey = {'merged':True,'kind':'hydrogen_bonds','scoring_method':'reduced'}
+		extra = {'kind_label':'hydrogen_bonds.merged.mdia2'}
+		extra['merge_rule'] = merge_rule
+		#! note that you cannot include extra in survey because some meta do not
+		#!   have the merged value, hence they will also match properly. this design
+		#!   is worth considering in more detail
+		#! clumsy?
+		sns_this = [i for i in post.get(**survey).keys() if 'mdia2' in i]
+		plot_protein_lipid_histograms(sns=sns_this,
+			**dict(survey,**extra))
+	#! another demo
+	if 0:
+		extra = {'kind_label':'hydrogen_bonds.merged.mdia2','merged':True}
+		extra['merge_rule'] = merge_rule
+		survey = {'kind': 'hydrogen_bonds', 'scoring_method': 'reduced'}
+		sns_name,sns_this = loop_sns[0]
+		sns_this = ['mdia2_nochl', 'mdia2_10', 'mdia2_20', 'mdia2_30']
+		plot_protein_lipid_timeseries(sns=sns_this,
+			**dict(survey,**extra))
+
 	# adding an "all" plot. this only applies to timeseries (see ignore below)
 	#! timeseries all above is currently broken
 	if False:
-		if 'all' not in list(zip(*loop_sns))[0]: loop_sns += [('all',sns)]
+		if 'all' not in list(zip(*loop_sns))[0]: 
+			loop_sns += [('all',sns)]
 
 	# plot loop
 	for survey in surveys: 
@@ -847,7 +939,6 @@ if __name__=='__main__':
 					axe.set_xticks((np.arange(0, 2 * n_ind, 2) + 1 / float(n_df + 1)) / 2.)
 					axe.set_xticklabels(df.index, rotation = 0)
 					axe.set_title(title)
-
 
 			#! naming sequence is perhaps clumsy
 			namer = namer_default = lambda kind,plot: ('fig.%s.%s'%(plot,kind))
@@ -1042,5 +1133,6 @@ if __name__=='__main__':
 					extras.append(tb)
 			extras.append(legend)
 			picturesave(custom['figname'],
-				work.plotdir,backup=False,version=True,meta={'sns':sns_this},
+				work.plotdir,backup=False,version=True,
+				meta={'sns':sns_this,'survey':survey},
 				extras=extras,dpi=300,form='png')
