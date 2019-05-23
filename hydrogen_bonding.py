@@ -30,7 +30,7 @@ def hydrogen_bonding(structure,trajectory,**kwargs):
 	sn = kwargs['sn']
 	work = kwargs['workspace']
 	calc = kwargs['calc']
-	debug = kwargs.get('debug',True)
+	debug = kwargs.get('debug',False)
 	run_parallel = kwargs.get('run_parallel',True)
 
 	# prototyping an external module import to replace the sometimes tedious addition of 
