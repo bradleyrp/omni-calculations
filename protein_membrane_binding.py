@@ -339,10 +339,11 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 		ax.set_xlim(0,peak_observations)
 		ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
 		ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
-		ax.spines['top'].set_visible(False)
-		ax.spines['right'].set_visible(False)
-		ax.spines['bottom'].set_visible(False)
-		ax.spines['left'].set_visible(False)
+		if False:
+			ax.spines['top'].set_visible(False)
+			ax.spines['right'].set_visible(False)
+			ax.spines['bottom'].set_visible(False)
+			ax.spines['left'].set_visible(False)
 		ax.set_xticks([])
 		ax.set_xticklabels([])
 		#! ax.set_yticklabels(['%d'%int(i) for i in np.arange(1,1+peak_observations)])
@@ -361,7 +362,10 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 			# note that we exclude the zero bin, which is otherwise included
 			peak_observations = max([max([np.array(list(
 				counts_raw[sn][k].values()))[:,1:].sum(axis=0).max() 
-				for k in counts_raw[sn]]) for sn in sns_this]) 
+				for k in counts_raw[sn]]) for sn in sns_this])
+			#!!! bug: the counts_total should not be the sum of these distributions
+			#!!!   particularly because we are summing a number not actually calculating
+			#!!!   the distinct lipids that the entire peptide is bound to, ignoring redundancy
 			counts_total = dict([(sn,dict([(lipid,np.sum([counts_raw[sn][resid][lipid]
 				for resid in resid_resname[sn]],axis=0)) for lipid in lipids_this]))
 				for sn in sns_this])
@@ -429,6 +433,8 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 							#!   sns_this = merge_rule[sn]
 							#! obs = [data.this[i]['observations'] for i in merge_rule[sn]]
 							#! obs = data.this[sn_this]['observations']
+							#!!! bug: we should not use data here, because data is not set to kind
+							#!!!   instead it refers to the salt bridges, and not the hydrogen bonds
 							obs = [data.this[i]['observations'] for i in merge_rule[sn]]
 							# get the dimensions (frames by unique bonds) for each simulation
 							n_rows,n_cols = np.array([i.shape for i in obs]).T
@@ -447,7 +453,6 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 						else: 
 							bonds = data.this[sn_this]['bonds']
 							obs = data.this[sn_this]['observations']
-						# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 						subject_is_resid = bonds[:,rowspec_this.index('subject_resid')]==str(resid)
 						target_is_lipid = bonds[:,rowspec_this.index('target_resname')]==lipid
 						if kind=='salt_bridges':
@@ -498,11 +503,111 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 			# summary column on the left
 			if what=='plot':
 				ax = axes[snum][0]
+				"""
+				errorlog
+					recomputing the all column here
+				previously, a block during the what=='plot' part of  the loop, we used this:
+					counts_total = dict([(sn,dict([(lipid,np.sum([counts_raw[sn][resid][lipid]
+						for resid in resid_resname[sn]],axis=0)) for lipid in lipids_this]))
+						for sn in sns_this])
+				we have to compute directly from the bonds
+				let us try to use the bonds data directly to check on this before continuing
+				actually hold off on this, just use obs and obs merge and check the numbers here
+				"""
+				# see comment above: reduce step to map from explicit atom-atom bonds to residues
+				if 0:
+					counts_total_alt = {}
+					for sn_this in work.sns():
+						counts_total_alt[sn_this] = {}
+						for lipid in lipids_this:
+							print(sn_this)
+							#! this whole decision point needs to be better!!!
+							if kind=='hydrogen_bonds': dat = data_hbonds.this[sn_this]
+							elif kind=='salt_bridges': 
+								data.set('contacts',select={'cutoff':cutoff,
+									'target':{'predefined':'lipid heavy'},
+									'subject':{'predefined':'protein heavy'},})
+								dat = data.this[sn_this]
+							else: raise Exception('invalid kind: %s'%kind)
+							bonds = dat['bonds']
+							obs = dat['observations']
+							# subselection here
+							if kind=='salt_bridges':
+								#! this might not be strict enough see the hydrogen_bonding stuff
+								inds = np.where(bonds[:,np.array(
+									rowspec_this.index('target_resname'))]==lipid)[0]
+								bonds_this = bonds[inds]
+								obs_this = obs[:,inds]
+								if np.any(np.in1d(bonds_this[:,
+									rowspec_this.index('target_resname')],list(residue_codes.keys()))):
+									raise Exception('salt bridge inconsistency. '
+										'we expect this to be one-sided')
+							elif kind=='hydrogen_bonds': 
+								this = np.any([np.all([np.in1d(bonds[:,
+									rowspec_this.index(['target_resname','subject_resname'][i])],[lipid_resnames,list(residue_codes.keys())][j]) 
+									for i,j in k],axis=0) 
+								for k in [[(0,0),(1,1)],[(0,1),(1,0)]]],axis=0)
+								inds = np.where(this)[0]
+								bonds_this = bonds[inds]
+								obs_this = obs[:,inds]
+							else: raise Exception('invalid kind: %s'%kind)
+							# modified for the entire peptide
+							colsel = np.array([rowspec_this.index(i) 
+								for i in ['target_resname','target_resid']])
+							bonds_residues,lookups = np.unique(
+								bonds_this[:,colsel].astype('S'),axis=0,return_inverse=True)
+							reduced = np.zeros((len(bonds_residues),len(obs_this))) 
+							for ii,i in enumerate(lookups): 
+								reduced[i] += obs_this.T[ii] 
+							reduced = (reduced>0).astype(int).T
+							counts_total_alt[sn_this][lipid] = reduced.sum(axis=1)
+					#! troubleshoot / debug
+					if 0:
+						sn = 'mdia2bilayerphys'
+						results = counts_total_alt[sn_this]['PI2P']
+						fr = 0
+						result = results[fr] # 7
+						np.unique(bonds[np.where(obs[fr])[0]][:,
+							np.array([3,4])].astype(str),axis=0).shape[0] # 7
+						# so far then it looks correct, but what are the unique residue-lipid bonds
+						# basically there are 7 unique lipids bound to the peptide though, 
+						#   so who cares about residues?
+						# so there are 18 unique residue-lipid pairs
+						np.unique(bonds[np.where(obs[fr])[0]][:,np.array([0,1,3,4])].astype(str),axis=0)
+						them = np.unique(bonds[np.where(obs[fr])[0]][:,
+							np.array([0,1,3,4])].astype(str),axis=0).shape # 18 total
+						np.unique(them[:,3]).shape # 7 total
+						np.unique(them[:,np.array([2,3])],axis=0) 
+						# one of them is a PS though, so it should be 6
+						# so all the per-lipid counts are equal and this is a BUG
+						np.all(counts_total_alt[sn_this]['PI2P']==counts_total_alt[sn_this]['DOPS'])
+					# after the fix above we see mean for mdia2 is 4.84 hydrogen bonds or 3.474
+					# change quickly to salt to see what's up
+					# actually those *were* the salt bridges at 3.4
+					# which is weird I must not be calling what I thought I was calling
+					#! debug again
+					if 0:
+						# counts_total_alt['mdia2bilayerphys2']['PI2P'].mean() # this is 22 because it includes all lipids?
+						pass
+						# need to do another drilldown here!
+						respairs = bonds[:,np.array([0,3])].astype(str)
+						# skeleton: np.where(np.any([np.all((),axis=0) for i in [1,-1]],axis=0))[0]
+						#! np.in1d(bonds[:,rowspec_this.index([
+						#!   'target_resname','subject_resname'][i])],
+						#!   [lipid_resnames,residue_codes.keys()][j])
+						# do not forget to turn dict keys into a list before in1d
+						this = np.any([np.all([np.in1d(bonds[:,rowspec_this.index(['target_resname','subject_resname'][i])],[lipid_resnames,list(residue_codes.keys())][j]) 
+							for i,j in k],axis=0) for k in [[(0,0),(1,1)],[(0,1),(1,0)]]],axis=0)
+						inds = np.where(this)[0]
+						# popped this above for the subselection
+						# after that fix, we have 3.605 and 4.64 for each
+					import ipdb;ipdb.set_trace()
 				df = pd.DataFrame(counts_total[sn],columns=lipids_this)
 				kwargs_bars = {}
 				if lipid_colors:
 					kwargs_bars['color'] = [lipid_colors[lipid] for lipid in lipids_this]
 				df[1:].plot.barh(ax=ax,stacked=True,legend=False,width=1.0,**kwargs_bars)
+				#! import ipdb;ipdb.set_trace()
 				#! the real one sums more
 				#! peak_observations_total = np.concatenate(counts_total[sn].values()).max()
 				stylize(ax,'All',peak_count,peak_observations_total)
@@ -538,6 +643,9 @@ if __name__=='__main__':
 	This script uses main to loop over many images.
 	"""
 
+	do_contacts_surveys = False
+	do_std_plots = True
+
 	### COLLECT DATA
 
 	# subselect simulation names
@@ -552,29 +660,30 @@ if __name__=='__main__':
 
 	# select a sweep
 	surveys = []
-	# select cutoffs here (note that loading the 5.0 requires more memory)
-	for cutoff in [3.4,5.0][:1]: 
+
+	if do_contacts_surveys:
+		# select cutoffs here (note that loading the 5.0 requires more memory)
+		for cutoff in [3.4,5.0][:1]: 
+			for scoring_method in ['explicit','reduced']:
+				surveys.append({
+					'kind':'contacts','cutoff':cutoff,
+					'kind_label':'contacts_%s'%cutoff,
+					'scoring_method':scoring_method,
+					'scale_counts':False})
+	if do_std_plots:
 		for scoring_method in ['explicit','reduced']:
+			# +++ assume salt bridge means cutoff 3.4 here
 			surveys.append({
-				'kind':'contacts','cutoff':cutoff,
-				'kind_label':'contacts_%s'%cutoff,
+				'kind':'salt_bridges',
+				'cutoff':3.4,
+				'kind_label':'salt_bridges',
 				'scoring_method':scoring_method,
 				'scale_counts':False})
-
-	surveys = []
-	for scoring_method in ['explicit','reduced']:
-		# +++ assume salt bridge means cutoff 3.4 here
-		surveys.append({
-			'kind':'salt_bridges',
-			'cutoff':3.4,
-			'kind_label':'salt_bridges',
-			'scoring_method':scoring_method,
-			'scale_counts':False})
-		surveys.append({
-			'kind':'hydrogen_bonds',
-			'kind_label':'hydrogen_bonds',
-			'scoring_method':scoring_method,
-			'scale_counts':False})
+			surveys.append({
+				'kind':'hydrogen_bonds',
+				'kind_label':'hydrogen_bonds',
+				'scoring_method':scoring_method,
+				'scale_counts':False})
 
 	def collect_post(**kwargs):
 		"""Perform post-processing."""
@@ -680,8 +789,11 @@ if __name__=='__main__':
 
 	# debugging merged timeseries SEE THE ALTERNATE MERGE RULE ABOVE
 	if False:
-		this = post.get(**{'kind': 'hydrogen_bonds', 'scoring_method': 'reduced', 'merged': True})['mdia2_20']['PI2P']
-		them = [post.get(**{'kind': 'hydrogen_bonds', 'scoring_method': 'reduced', 'merged': False})[sn]['PI2P'] for sn in ['mdia2bilayerphys','mdia2bilayerphys2']]
+		this = post.get(**{'kind': 'hydrogen_bonds', 'scoring_method': 
+			'reduced', 'merged': True})['mdia2_20']['PI2P']
+		them = [post.get(**{'kind': 'hydrogen_bonds', 'scoring_method': 
+			'reduced', 'merged': False})[sn]['PI2P'] 
+		for sn in ['mdia2bilayerphys','mdia2bilayerphys2']]
 		np.all(np.concatenate(them)==this) # true
 
 	### PLOT LOOP
@@ -716,10 +828,9 @@ if __name__=='__main__':
 		'figplace':lambda sn,nrows=9,ncols=3:
 			(sns_this.index(sn)%nrows,int(sns_this.index(sn)/nrows))}
 
-	### ONE-OFF demos!
+	### DEMOS SERIES
 
-	#! another demo with the merged plots here in a single example
-	if False:
+	if 1:
 		survey = {'merged':True,'cutoff':3.4,'kind':'salt_bridges','scoring_method':'explicit'}
 		extra = {'kind_label':'salt_bridges.merged'}
 		extra['merge_rule'] = merge_rule
@@ -728,7 +839,6 @@ if __name__=='__main__':
 		#!   is worth considering in more detail
 		plot_protein_lipid_histograms(sns=post.get(**survey).keys(),
 			**dict(survey,**extra))
-	#! another demo
 	if 0:
 		survey = {'merged':True,'kind':'hydrogen_bonds','scoring_method':'reduced'}
 		extra = {'kind_label':'hydrogen_bonds.merged.mdia2'}
@@ -740,7 +850,6 @@ if __name__=='__main__':
 		sns_this = [i for i in post.get(**survey).keys() if 'mdia2' in i]
 		plot_protein_lipid_histograms(sns=sns_this,
 			**dict(survey,**extra))
-	#! another demo
 	if 0:
 		surveys = []
 		survey = {'merged':True,'kind':'hydrogen_bonds','scoring_method':'reduced'}
@@ -753,7 +862,6 @@ if __name__=='__main__':
 		sns_this = [i for i in post.get(**survey).keys() if 'mdia2' in i]
 		plot_protein_lipid_histograms(sns=sns_this,
 			**dict(survey,**extra))
-	#! another demo
 	if 0:
 		extra = {'kind_label':'hydrogen_bonds.merged.mdia2','merged':True}
 		extra['merge_rule'] = merge_rule
@@ -953,6 +1061,7 @@ if __name__=='__main__':
 				work.plotdir,backup=False,version=True,meta={'sns':sns_this},
 				extras=[legend],dpi=300,form='png')
 
+	# reduced plot prepared for BPS
 	if do_special: 
 
 		#! pick one for now
