@@ -17,9 +17,11 @@ get_lipid_resnames
 from omni import WorkSpace
 control.routine = None
 
-#! move this back
-#from calcs.codes.salt_bridge_definitions import SaltBridge
 class SaltBridge:
+
+	#!!! move this back to a central location
+	#!!! from calcs.codes.salt_bridge_definitions import SaltBridge
+
 	"""
 	Identify salt bridges.
 	"""
@@ -92,26 +94,29 @@ class SaltBridge:
 			],axis=0)
 		return salt_filter
 
-from ortho import importer,uniform,tracebacker
-from calcs.codes.consts import residue_codes
-from omni import picturesave,status
-from omni import subdivide_trajectory,zoom_figure,PostAccumulator
+###!!! imports
+if 1:
 
-from omni.base.store import picturesave
-from omni.base.utils import subdivide_trajectory
-from omni.plotter.utils import zoom_figure
-from omni.base.utils import PostAccumulator
-from omni import status
+	from ortho import importer,uniform,tracebacker
+	from calcs.codes.consts import residue_codes
+	from omni import picturesave,status
+	from omni import subdivide_trajectory,zoom_figure,PostAccumulator
 
-import numpy as np
-import pandas as pd
-from collections import OrderedDict as odict
-import copy
-import re
+	from omni.base.store import picturesave
+	from omni.base.utils import subdivide_trajectory
+	from omni.plotter.utils import zoom_figure
+	from omni.base.utils import PostAccumulator
+	from omni import status
 
-import matplotlib as mpl
-mpl.use(ortho.conf.get('mpl_backend','Agg'))
-import matplotlib.pyplot as plt
+	import numpy as np
+	import pandas as pd
+	from collections import OrderedDict as odict
+	import copy
+	import re
+
+	import matplotlib as mpl
+	mpl.use(ortho.conf.get('mpl_backend','Agg'))
+	import matplotlib.pyplot as plt
 
 @loader
 def load():
@@ -635,7 +640,8 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 				backup=False,version=True,meta=meta,
 				extras=[],dpi=300,form='png')
 
-if __name__=='__main__': 
+### REFACTORING ABOVE
+if __name__=='__main__' and 0: 
 
 	"""
 	Note two styles for plot scripts: ones with @function decorators are 
@@ -1245,3 +1251,139 @@ if __name__=='__main__':
 				work.plotdir,backup=False,version=True,
 				meta={'sns':sns_this,'survey':survey},
 				extras=extras,dpi=300,form='png')
+
+if __name__=='__main__': 
+
+	#! do not forget cholesterol
+	lipid_resnames = ['DOPC', 'DOPS', 'POPC', 'DOPE', 'SAPI', 'PI2P']+['CHL1']
+	#! preempt problems using dict_keys in in1d
+	protein_resnames = list(residue_codes.keys())
+
+	# identify the target data
+	sn = sn_this = 'mdia2bilayerphys'
+	cutoff = 3.4
+	data.set('contacts',select={'cutoff':cutoff,
+		'target':{'predefined':'lipid heavy'},
+		'subject':{'predefined':'protein heavy'}})
+
+	# prepare the data
+	span = {}
+	bonds,obs = [data.this[sn][i] for i in ['bonds','observations']]
+	bonds_h,obs_h = [data_hbonds.this[sn][i] for i in ['bonds','observations']]
+	rowspec_salt = data.this[sn_this]['defn_rowspec']
+	#! hardcoded rowspec here because it was not in the original (it is now. actually no)
+	rowspec_hbonds = ['subject_resname','subject_resid','subject_atom',
+		'target_resname','target_resid','target_atom','hydrogen_atom']
+	span['salt_bridges'] = {'bonds':bonds,'obs':obs,'rowspec':rowspec_salt}
+	span['hydrogen_bonds'] = {'bonds':bonds_h,'obs':obs_h,'rowspec':rowspec_hbonds}
+
+	# first reduction: remove the atoms
+	col_targets = ['subject_resname','subject_resid','target_resname','target_resid']
+	for key in span:
+		rowspec = span[key]['rowspec']
+		cols = np.array([rowspec_this.index(i) for i in col_targets])		
+		span[key]['bonds'] = span[key]['bonds'][:,cols]
+
+	# finalize the bond type order here
+	kind_order = list(span.keys())
+	# prepare the stacks
+	stack_bonds,stack_obs = [[span[k][j] for k in kind_order] for j in ['bonds','obs']]
+
+	# second reduction: a filter: consider only protein-lipid bonds
+	stacks = []
+	for bonds_this,obs_this in zip(stack_bonds,stack_obs):
+		#! dev: bonds_this,obs_this = list(zip(stack_bonds,stack_obs))[1]
+		resname_cols = [col_targets.index(i) for i in ['subject_resname','target_resname']]
+		# get the number of protein residues or lipids in each row
+		has_protein,has_lipid = [np.sum([np.in1d(bonds_this[:,i],group)*1 
+			for i in resname_cols],axis=0) for group in [protein_resnames,lipid_resnames]]
+		# consistency check: two items in a pair
+		if np.any((has_protein+has_lipid)!=2.): raise Exception('inconsistent pairs')
+		# filter here for a single protein and lipid in each pair
+		idx = np.where(np.all((has_protein==1,has_lipid==1),axis=0))[0]
+		stacks.append([bonds_this[idx],obs_this[:,idx]])
+	stack_bonds,stack_obs = zip(*stacks)
+
+	# note that there will be some redundancy handled by the upcoming reduction
+	bonds_cat = np.concatenate(stack_bonds).astype(str)
+	# formulate all unique bonds between all bond types
+	bonds_u,lookups = np.unique(bonds_cat,axis=0,return_inverse=True)
+	nbonds = len(bonds_u)
+	# map the rows before the cat so we can stack the obs
+	ind_major = np.concatenate([np.ones(len(i))*ii for ii,i in enumerate(stack_bonds)])
+	ind_minor = np.concatenate([np.arange(len(i)) for ii,i in enumerate(stack_bonds)])
+
+	# third reduction: turn bonds over multiple atoms into a single bond
+	obs_new_stack = []
+	for stackno,obs_this in enumerate(stack_obs):
+		reindex = lookups[np.where(ind_major==stackno)[0]]
+		obs_new = np.zeros((len(obs_this),nbonds))
+		# numpy allows for fast non-buffered additions
+		#! previous method does not sum: obs_new[:,reindex] += obs_this
+		#! this method is slow: for ii,i in enumerate(reindex): obs_new[:,i] += obs_this[:,ii]
+		np.add.at(obs_new.T,reindex,obs_this.T)
+		# reduce to binary. note that we could use the "previous method" above to skip to this
+		obs_new[obs_new>0] = 1.0
+		obs_new_stack.append(obs_new)
+
+	# fourth reduction: ignore redundant protein residues and only count the lipids
+	# note that this looks like a filter-reduce pair like the second and third
+	# first we reduce the lipids
+	if 0:
+		bonds_lipids_u,lookups_lipids = np.unique(bonds_u[:,],axis=0,return_inverse=True)
+		obs_new_new_stack = []
+		for stackno,obs_this in enumerate(stack_obs):
+			#! dev: bonds_this,obs_this = list(zip(stack_bonds,stack_obs))[1]
+			obs_new = np.zeros((len(obs_this),nbonds))
+			bonds_lipids_u = 
+
+			idx = np.where(np.all((has_protein==1,has_lipid==1),axis=0))[0]
+			stacks.append([bonds_this[idx],obs_this[:,idx]])
+
+	# get the intersection and disjoint sets
+	def reduce_obs_tables_by_bond(left,right):
+		"""
+		Decompose bond types into two disjoint sets plus the intersection.
+		"""
+		order = ['left','right','intersect']
+		shape = left.shape
+		decomp = np.zeros([len(order)]+list(shape))
+		decomp[order.index('left')] = (np.sum((left==1,right==0),axis=0)==2)*1
+		decomp[order.index('right')] = (np.sum((left==0,right==1),axis=0)==2)*1
+		decomp[order.index('intersect')] = (np.sum((left==1,right==1),axis=0)==2)*1
+		return decomp
+	decomp = reduce_obs_tables_by_bond(*obs_new_stack)
+
+	# recall that we ensure that we have 1 protein and 1 lipid in each pair above
+	#   see the "two items in a pair" consistency check and the following filter
+	resname_cols = [col_targets.index(i) for i in ['subject_resname','target_resname']]
+	# when to reverse so the first column is a protein
+	idx_sym_r = np.in1d(bonds_u[:,resname_cols[1]],protein_resnames)*1
+	# flip the bond list so the columns are protein, then resname
+	bonds_u[np.where(idx_sym_r)] = bonds_u[np.where(idx_sym_r),np.array([2,3,0,1])]
+	# order by lipid type
+	kinds,kind_idx = np.unique(bonds_u[:,col_targets.index('target_resname')],return_inverse=True)
+	kind_subsel = [np.where(kind_idx==knum)[0] for knum in range(len(kinds))]
+	counts_max = max([decomp[:,k].sum(axis=0).sum(axis=1).max() for k in kind_subsel])
+	bins = np.arange(0,counts_max+2).astype(int)
+
+	# looking at just hydrogen bonds
+	# decomp = [decomp[1],decomp[2]]
+	# looking at just the salt bridges
+	# decomp = [decomp[0],decomp[2]]
+	# if no, reduction, it's both
+
+	hists_by_lipid = []
+	for knum,kind in enumerate(kinds):
+		counts = np.array([d[:,kind_subsel[knum]].sum(axis=1) for d in decomp]).astype(int)
+		hists = np.array([np.histogram(c,bins=bins)[0] for c in counts])
+		hists_by_lipid.append(hists)
+
+	fig = plt.figure()
+	ax = fig.add_subplot(111)
+	bottom = np.zeros(len(bins)-1)
+	for h in hists_by_lipid[::-1]:
+		heights = h.sum(axis=0)
+		ax.bar(bins[1:-1],heights[1:],bottom=bottom[1:])
+		bottom += heights
+	picturesave('DEVFIG',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
