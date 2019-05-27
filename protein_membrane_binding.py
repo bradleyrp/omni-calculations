@@ -1254,6 +1254,9 @@ if __name__=='__main__' and 0:
 
 if __name__=='__main__': 
 
+	do_discard_protein = True
+	do_scale_histograms_by_frame = True
+
 	#! do not forget cholesterol
 	lipid_resnames = ['DOPC', 'DOPS', 'POPC', 'DOPE', 'SAPI', 'PI2P']+['CHL1']
 	#! preempt problems using dict_keys in in1d
@@ -1281,7 +1284,7 @@ if __name__=='__main__':
 	col_targets = ['subject_resname','subject_resid','target_resname','target_resid']
 	for key in span:
 		rowspec = span[key]['rowspec']
-		cols = np.array([rowspec_this.index(i) for i in col_targets])		
+		cols = np.array([rowspec.index(i) for i in col_targets])		
 		span[key]['bonds'] = span[key]['bonds'][:,cols]
 
 	# finalize the bond type order here
@@ -1313,9 +1316,11 @@ if __name__=='__main__':
 	ind_major = np.concatenate([np.ones(len(i))*ii for ii,i in enumerate(stack_bonds)])
 	ind_minor = np.concatenate([np.arange(len(i)) for ii,i in enumerate(stack_bonds)])
 
-	# third reduction: turn bonds over multiple atoms into a single bond
+	# third reduction: turn bonds over multiple instances (i.e. atoms) into a single bond
 	obs_new_stack = []
 	for stackno,obs_this in enumerate(stack_obs):
+		# use the inverse and the stack number to get the map from multiple reundant bonds
+		#   in the original bond stack to unique bonds. use of lookups does the reduction
 		reindex = lookups[np.where(ind_major==stackno)[0]]
 		obs_new = np.zeros((len(obs_this),nbonds))
 		# numpy allows for fast non-buffered additions
@@ -1326,22 +1331,56 @@ if __name__=='__main__':
 		obs_new[obs_new>0] = 1.0
 		obs_new_stack.append(obs_new)
 
-	# fourth reduction: ignore redundant protein residues and only count the lipids
-	# note that this looks like a filter-reduce pair like the second and third
-	# first we reduce the lipids
-	if 0:
-		bonds_lipids_u,lookups_lipids = np.unique(bonds_u[:,],axis=0,return_inverse=True)
-		obs_new_new_stack = []
-		for stackno,obs_this in enumerate(stack_obs):
-			#! dev: bonds_this,obs_this = list(zip(stack_bonds,stack_obs))[1]
-			obs_new = np.zeros((len(obs_this),nbonds))
-			bonds_lipids_u = 
+	# recall that we ensure that we have 1 protein and 1 lipid in each pair above
+	#   see the "two items in a pair" consistency check and the following filter
+	resname_cols = [col_targets.index(i) for i in ['subject_resname','target_resname']]
+	# when to reverse so the first column is a protein
+	idx_sym_r = np.in1d(bonds_u[:,resname_cols[1]],protein_resnames)*1
+	# flip the bond list so the columns are protein, then resname
+	bonds_u[np.where(idx_sym_r)] = bonds_u[np.where(idx_sym_r),np.array([2,3,0,1])]
 
-			idx = np.where(np.all((has_protein==1,has_lipid==1),axis=0))[0]
-			stacks.append([bonds_this[idx],obs_this[:,idx]])
+	"""
+	STATUS
+	first we discarded the atoms
+	we then computed unique bonds across types (salt bridge, hydrogen bonds) in bonds_u
+	then we filtered for protein-lipid bonds
+	a reduce step mapped multiple bond entries into a single bond
+	after that step ("third reduction") the observation stack matches the bonds_u list
+	a new reduce step will discard the protein side and consider only lipid targets
+	note that we previously had distinct bond lists by bond type
+		but now we only have one bond list. this is a key difference
+	the following block will be modular, and can be removed to recover the previous behavior
+	in the previous behavior, two protein residues bonding to one lipid would be counted twice
+	"""
+
+	# fourth reduce step: discard the protein side
+	if do_discard_protein:
+		col_nums = [col_targets.index(i) for i in ['target_resname','target_resid']]
+		bonds_lipids_u,lookups_lipids = np.unique(bonds_u[:,col_nums],axis=0,return_inverse=True)
+		ntargets = len(bonds_lipids_u)
+		# compared to last time, we only have one bonds list
+		bonds_this = bonds_u
+		# iterative naming
+		obs_prev_stack = obs_new_stack
+		obs_new_stack = []
+		# note that stack_bonds is just a repeated stack of the bonds_u
+		for stackno,obs_this in enumerate(obs_prev_stack):
+			#! dev: stackno = 1; obs_this = obs_new_stack[1]
+			obs_new = np.zeros((len(obs_this),ntargets))
+			# compared to the previous step, we do not have to subselect the lookups
+			#   because we only have one bonds list
+			reindex = lookups_lipids
+			np.add.at(obs_new.T,reindex,obs_this.T)
+			# reduce to binary
+			obs_new[obs_new>0] = 1.0
+			obs_new_stack.append(obs_new)
+		# rename bonds_u to continue. note that it only contains the lipid part of the bond now
+		bonds_u = bonds_lipids_u
+		# update the col_targets to match the new bonds list
+		col_targets = ['target_resname','target_resid']
 
 	# get the intersection and disjoint sets
-	def reduce_obs_tables_by_bond(left,right):
+	def reduce_obs_tables_by_bond(left,right,names=None):
 		"""
 		Decompose bond types into two disjoint sets plus the intersection.
 		"""
@@ -1351,39 +1390,72 @@ if __name__=='__main__':
 		decomp[order.index('left')] = (np.sum((left==1,right==0),axis=0)==2)*1
 		decomp[order.index('right')] = (np.sum((left==0,right==1),axis=0)==2)*1
 		decomp[order.index('intersect')] = (np.sum((left==1,right==1),axis=0)==2)*1
-		return decomp
-	decomp = reduce_obs_tables_by_bond(*obs_new_stack)
+		result = dict(decomp=decomp,order=order)
+		# ensure the order above is respected and pass along the names if they are given
+		if names:
+			order_named = [None,None,None]
+			for ii,i in enumerate(['left','right']):
+				order_named[order.index(i)] = names[ii]
+			order_named[order.index('intersect')] = 'intersect'
+			result['order_named'] = order_named
+		return result
+	result = reduce_obs_tables_by_bond(*obs_new_stack,names=kind_order)
+	decomp,decomp_order = result['decomp'],result['order_named']
 
-	# recall that we ensure that we have 1 protein and 1 lipid in each pair above
-	#   see the "two items in a pair" consistency check and the following filter
-	resname_cols = [col_targets.index(i) for i in ['subject_resname','target_resname']]
-	# when to reverse so the first column is a protein
-	idx_sym_r = np.in1d(bonds_u[:,resname_cols[1]],protein_resnames)*1
-	# flip the bond list so the columns are protein, then resname
-	bonds_u[np.where(idx_sym_r)] = bonds_u[np.where(idx_sym_r),np.array([2,3,0,1])]
 	# order by lipid type
 	kinds,kind_idx = np.unique(bonds_u[:,col_targets.index('target_resname')],return_inverse=True)
 	kind_subsel = [np.where(kind_idx==knum)[0] for knum in range(len(kinds))]
 	counts_max = max([decomp[:,k].sum(axis=0).sum(axis=1).max() for k in kind_subsel])
 	bins = np.arange(0,counts_max+2).astype(int)
 
+	# use the following comments to look specifically at hbonds or salt bridges
 	# looking at just hydrogen bonds
 	# decomp = [decomp[1],decomp[2]]
 	# looking at just the salt bridges
 	# decomp = [decomp[0],decomp[2]]
 	# if no, reduction, it's both
 
-	hists_by_lipid = []
+	nframes = [len(i) for i in obs_new_stack]
+	if np.unique(nframes).shape[0]!=1: raise Exception('bond types have different frame counts')
+	else: nframes = nframes[0]
+
+	hists_by_lipid,counts_by_lipid = [],[]
 	for knum,kind in enumerate(kinds):
 		counts = np.array([d[:,kind_subsel[knum]].sum(axis=1) for d in decomp]).astype(int)
+		counts_by_lipid.append(counts)
 		hists = np.array([np.histogram(c,bins=bins)[0] for c in counts])
+		if do_scale_histograms_by_frame:
+			hists = hists/nframes
 		hists_by_lipid.append(hists)
 
-	fig = plt.figure()
-	ax = fig.add_subplot(111)
-	bottom = np.zeros(len(bins)-1)
-	for h in hists_by_lipid[::-1]:
-		heights = h.sum(axis=0)
-		ax.bar(bins[1:-1],heights[1:],bottom=bottom[1:])
-		bottom += heights
-	picturesave('DEVFIG',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
+	if 1:
+
+		fig = plt.figure()
+		ax = fig.add_subplot(111)
+		bottom = np.zeros(len(bins)-1)
+		for h in hists_by_lipid[::-1]:
+			heights = h.sum(axis=0)
+			ax.bar(bins[1:-1],heights[1:],bottom=bottom[1:])
+			bottom += heights
+		picturesave('DEVFIG2',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
+
+	# consistency checks
+	for kind_this in kind_order:
+		for lipid_this in kinds:
+			# consistency check 1: histogram counts sum to total frames we observe bonds
+			knum = list(kinds).index(lipid_this)
+			cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
+			idx = np.where(bonds_u[:,col_targets.index('target_resname')]==kinds[knum])[0]
+			# note that we ignore the first bin, which is a bond count of zero
+			if not (np.histogram(counts_by_lipid[knum][cols].sum(axis=0),bins=bins)[0][1:].sum()==
+				np.sum(obs_new_stack[kind_order.index(kind_this)][:,idx].sum(axis=1)>0)):
+				raise Exception('failed consistency check (1): %s,%s'%(kind_this,lipid_this))
+			# consistency check 2: total bonds for a type and lipid
+			knum = list(kinds).index(lipid_this)
+			cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
+			bonds = counts_by_lipid[knum][cols].sum(axis=0)
+			total_bonds = bonds.sum()
+			obs_this = obs_new_stack[kind_order.index(kind_this)]
+			idx = np.where(bonds_u[:,col_targets.index('target_resname')]==kinds[knum])[0]
+			total_bonds_alt = obs_this[:,idx].sum(axis=1).sum()
+			if not total_bonds==total_bonds_alt: raise Exception('failed consistency check (2)')
