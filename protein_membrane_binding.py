@@ -1464,7 +1464,6 @@ def compute_histograms(sn):
 			hists_by_lipid=hists_by_lipid,bins=bins,counts_by_lipid=counts_by_lipid,
 			lipid_kinds=lipid_kinds)
 
-	result['decomps'] = decomps
 	return result
 
 if __name__=='__main__': 
@@ -1489,13 +1488,6 @@ if __name__=='__main__':
 		'target':{'predefined':'lipid heavy'},
 		'subject':{'predefined':'protein heavy'}})
 
-	if 'post' not in globals():
-		post = {}
-		sns_all = work.sns()
-		for snum,sn in enumerate(sns_all):
-			status('computing histograms',i=snum,looplen=len(sns_all))
-			post[sn] = compute_histograms(sn)
-	
 	### recapitulate these below and then retire them!
 	# single combined plot
 	if 0:
@@ -1667,12 +1659,19 @@ if __name__=='__main__':
 			ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
 		picturesave(figname,work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
 
+	if 'post' not in globals():
+		post = {}
+		sns_all = work.sns()
+		for snum,sn in enumerate(sns_all):
+			status('computing histograms',i=snum,looplen=len(sns_all))
+			post[sn] = compute_histograms(sn)
+
 	# select a supergroup
 	sg = 'mdia2'
 
 	# select plots to render
-	do_decomposition_plot = 1
-	do_default_histograms = 1
+	do_decomposition_plot = 0
+	do_default_histograms = 0
 
 	# PLOT SERIES
 	if do_default_histograms:
