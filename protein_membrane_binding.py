@@ -1256,6 +1256,9 @@ if __name__=='__main__':
 
 	do_discard_protein = True
 	do_scale_histograms_by_frame = True
+	include_zero = 1
+	lipid_colors = {'PI2P':'r','DOPE':'gray','DOPS':'b'}
+	lipid_stack_order = ['PI2P','DOPS','DOPE']
 
 	#! do not forget cholesterol
 	lipid_resnames = ['DOPC', 'DOPS', 'POPC', 'DOPE', 'SAPI', 'PI2P']+['CHL1']
@@ -1405,8 +1408,6 @@ if __name__=='__main__':
 	# order by lipid type
 	kinds,kind_idx = np.unique(bonds_u[:,col_targets.index('target_resname')],return_inverse=True)
 	kind_subsel = [np.where(kind_idx==knum)[0] for knum in range(len(kinds))]
-	counts_max = max([decomp[:,k].sum(axis=0).sum(axis=1).max() for k in kind_subsel])
-	bins = np.arange(0,counts_max+2).astype(int)
 
 	# use the following comments to look specifically at hbonds or salt bridges
 	# looking at just hydrogen bonds
@@ -1419,43 +1420,93 @@ if __name__=='__main__':
 	if np.unique(nframes).shape[0]!=1: raise Exception('bond types have different frame counts')
 	else: nframes = nframes[0]
 
-	hists_by_lipid,counts_by_lipid = [],[]
-	for knum,kind in enumerate(kinds):
-		counts = np.array([d[:,kind_subsel[knum]].sum(axis=1) for d in decomp]).astype(int)
-		counts_by_lipid.append(counts)
-		hists = np.array([np.histogram(c,bins=bins)[0] for c in counts])
-		if do_scale_histograms_by_frame:
-			hists = hists/nframes
-		hists_by_lipid.append(hists)
+	def histograms_by_kind(decomp):
+		"""
+		"""
+		hists_by_lipid,counts_by_lipid = [],[]
+		for knum,kind in enumerate(kinds):
+			counts = np.array([d[:,kind_subsel[knum]].sum(axis=1) for d in decomp]).astype(int)
+			counts_by_lipid.append(counts)
+		counts_max = max([c.sum(axis=0).max() for c in counts_by_lipid])
+		bins = np.arange(0,counts_max+2).astype(int)	
+		for knum,kind in enumerate(kinds):
+			counts = counts_by_lipid[knum]
+			hist = np.histogram(counts.sum(axis=0),bins=bins)[0]
+			hists_by_lipid.append(hist)
+		hists_by_lipid = np.array(hists_by_lipid)/nframes
+		return hists_by_lipid,bins
 
-	if 1:
-
-		fig = plt.figure()
+	
+	# single combined plot
+	if 0:
+		hists_by_lipid,bins = histograms_by_kind(decomp)
+		ind0 = 0 if include_zero else 1
+		fig = plt.figure(figsize=(8,8))
 		ax = fig.add_subplot(111)
 		bottom = np.zeros(len(bins)-1)
-		for h in hists_by_lipid[::-1]:
-			heights = h.sum(axis=0)
-			ax.bar(bins[1:-1],heights[1:],bottom=bottom[1:])
+		for lipid_resname in lipid_stack_order:
+			#! this is the site of a costly error where we summed histograms
+			heights = hists_by_lipid[list(kinds).index(lipid_resname)]
+			#! now that this is fixed, the hist.sum() is always the number of frames
+			ax.bar(bins[ind0:-1],heights[ind0:],bottom=bottom[ind0:],
+				color=lipid_colors[lipid_resname],width=1.0)
 			bottom += heights
+		ax.set_xticks(range(ind0,bins.max()))
+		ax.set_xlim((ind0-0.5,bins.max()-0.5))
 		picturesave('DEVFIG2',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
+	# decomposition plot panel
+	if 1:
+
+		decomps = [
+			('salt bridges alone',['salt_bridges']),
+			('hydrogen bonds alone',['hydrogen_bonds']),
+			('salt bridges',['salt_bridges','intersect']),
+			('hydrogen bonds',['hydrogen_bonds','intersect']),
+			('hydrogen bond\nand salt bridge',
+				['salt_bridges','hydrogen_bonds','intersect']),]
+		figdim = 2.5
+		fig,axes = plt.subplots(nrows=1,ncols=5,figsize=(figdim*5,figdim))
+		plt.subplots_adjust(wspace=0.5)
+		for axnum,(name,decomp_this) in enumerate(decomps):
+			ax = axes[axnum]
+			decomp_out = [decomp[decomp_order.index(i)] for i in decomp_this]
+			hists_by_lipid,bins = histograms_by_kind(decomp_out)
+			ax.set_title(name)
+			ind0 = 0 if include_zero else 1
+			bottom = np.zeros(len(bins)-1)
+			for lipid_resname in lipid_stack_order:
+				#! this is the site of a costly error where we summed histograms
+				heights = hists_by_lipid[list(kinds).index(lipid_resname)]
+				#! now that this is fixed, the hist.sum() is always the number of frames
+				ax.bar(bins[ind0:-1],heights[ind0:],bottom=bottom[ind0:],
+					color=lipid_colors[lipid_resname],width=1.0)
+				bottom += heights
+			ax.set_xticks(range(ind0,bins.max()))
+			ax.set_xlim((ind0-0.5,bins.max()-0.5))
+			ax.set_xlabel('bound lipids')
+			ax.set_ylabel('observations per frame')
+			ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
+			ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
+		picturesave('DEVFIG3',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
 
 	# consistency checks
-	for kind_this in kind_order:
-		for lipid_this in kinds:
-			# consistency check 1: histogram counts sum to total frames we observe bonds
-			knum = list(kinds).index(lipid_this)
-			cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
-			idx = np.where(bonds_u[:,col_targets.index('target_resname')]==kinds[knum])[0]
-			# note that we ignore the first bin, which is a bond count of zero
-			if not (np.histogram(counts_by_lipid[knum][cols].sum(axis=0),bins=bins)[0][1:].sum()==
-				np.sum(obs_new_stack[kind_order.index(kind_this)][:,idx].sum(axis=1)>0)):
-				raise Exception('failed consistency check (1): %s,%s'%(kind_this,lipid_this))
-			# consistency check 2: total bonds for a type and lipid
-			knum = list(kinds).index(lipid_this)
-			cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
-			bonds = counts_by_lipid[knum][cols].sum(axis=0)
-			total_bonds = bonds.sum()
-			obs_this = obs_new_stack[kind_order.index(kind_this)]
-			idx = np.where(bonds_u[:,col_targets.index('target_resname')]==kinds[knum])[0]
-			total_bonds_alt = obs_this[:,idx].sum(axis=1).sum()
-			if not total_bonds==total_bonds_alt: raise Exception('failed consistency check (2)')
+	if 1: # off if we do a sub-decomp above with those comments
+		for kind_this in kind_order:
+			for lipid_this in kinds:
+				# consistency check 1: histogram counts sum to total frames we observe bonds
+				knum = list(kinds).index(lipid_this)
+				cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
+				idx = np.where(bonds_u[:,col_targets.index('target_resname')]==kinds[knum])[0]
+				# note that we ignore the first bin, which is a bond count of zero
+				if not (np.histogram(counts_by_lipid[knum][cols].sum(axis=0),bins=bins)[0][1:].sum()==
+					np.sum(obs_new_stack[kind_order.index(kind_this)][:,idx].sum(axis=1)>0)):
+					raise Exception('failed consistency check (1): %s,%s'%(kind_this,lipid_this))
+				# consistency check 2: total bonds for a type and lipid
+				knum = list(kinds).index(lipid_this)
+				cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
+				bonds = counts_by_lipid[knum][cols].sum(axis=0)
+				total_bonds = bonds.sum()
+				obs_this = obs_new_stack[kind_order.index(kind_this)]
+				idx = np.where(bonds_u[:,col_targets.index('target_resname')]==kinds[knum])[0]
+				total_bonds_alt = obs_this[:,idx].sum(axis=1).sum()
+				if not total_bonds==total_bonds_alt: raise Exception('failed consistency check (2)')
