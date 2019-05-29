@@ -3,8 +3,8 @@
 """
 Analyze hydrogen bonding and contact data to plot protein-membrane interactions.
 
-UPSTREAM:
-~~~~~~~~~
+UPSTREAM
+~~~~~~~~
 residue_codes,picturesave
 WorkSpace for
 	plotdir for picturesave
@@ -17,85 +17,9 @@ get_lipid_resnames
 from omni import WorkSpace
 control.routine = None
 
-class SaltBridge:
-
-	#!!! move this back to a central location
-	#!!! from calcs.codes.salt_bridge_definitions import SaltBridge
-
-	"""
-	Identify salt bridges.
-	"""
-	"""
-	A note on other software definitions.
-	VMD seems permissive: 
-		https://www.ks.uiuc.edu/Research/vmd/plugins/saltbr/
-	> A salt bridge is considered to be formed if the distance between any of 
-	the oxygen atoms of acidic residues and the nitrogen atoms of basic residues 
-	are within the cut-off distance (default 3.2 Angstroms) in at least one 
-	frame. The default distance cut-off can be changed by the user. This plugin 
-	does not attempt to identify hydrogen bonds.
-	#! see also 
-		http://www.imgt.org/IMGTeducation/Aide-memoire/_UK/aminoacids/charge/
-	#! see also 
-		https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6016756/
-	> Salt-bridge and aromatic-aromatic bond calculation
-	> Positively charged atoms are Lys NZ1, Arg NH1, Arg NH2 and His NE2. 
-	Negatively charged atoms are Asp OD1, Asp OD2, Glu OE1, Glu OE2. A salt 
-	bridge is defined if two oppositely charged atoms lie within 4A across the 
-	interface. A pi-pi interaction is defined between two aromatic amino acids 
-	if the distance calculated from their centroid is less than 7.5A.
-	"""
-	defn_salt_bridges_protein = {
-		'donor':[
-			{'resname':'ARG','atoms':['NH1','NH2']},
-			{'resname':'LYS','atoms':['NZ']},
-			# we allow HIS which is charged at neutral 
-			#   but we discard NE2 which is protonated with HE2
-			{'resname':'HIS','atoms':['ND1','NE2'][:1]}],
-		'acceptor':[
-			{'resname':'GLU','atoms':['OE1','OE2']},
-			{'resname':'ASP','atoms':['OD1','OD2']},]}
-	def __init__(self): pass
-	def filter_salt_bridges_protein(self,bonds,rowspec):
-		"""Filter a bonds list for salt bridges."""
-		# search should be fast because it is composed of filters on bonds
-		#! however there are many combinations. are there ways to improve?
-		subject_target_combos = [['subject','target'],['target','subject']]
-		salt_filter = np.any([
-			np.all([
-				bonds[:,rowspec.index('%s_resname'%this)]==salt_bridge_donor['resname'],
-				np.in1d(bonds[:,rowspec.index('%s_atom'%this)],salt_bridge_donor['atoms']),
-				bonds[:,rowspec.index('%s_resname'%that)]==salt_bridge_acceptor['resname'],
-				np.in1d(bonds[:,rowspec.index('%s_atom'%that)],salt_bridge_acceptor['atoms']),
-				],axis=0)
-			# another loop over OR for subject target order, hence symmetry
-			for this,that in subject_target_combos
-			# loop over possible salt bridges
-			for salt_bridge_donor in self.defn_salt_bridges_protein['donor']
-			for salt_bridge_acceptor in self.defn_salt_bridges_protein['acceptor']
-			],axis=0)
-		return salt_filter
-	def filter_salt_bridges_protein_lipid(self,bonds,rowspec,kind='permissive'):
-		"""Filter a bonds list for salt bridges between a protein and a membrane."""
-		if kind=='permissive':
-			lipid_selection = np.in1d(bonds[:,
-				rowspec.index('target_atom')].astype('<U1'),['O'])
-		else: raise Exception('unclear protein_lipid bond style: %s'%kind)
-		# assume target is lipid and subject is protein
-		this,that = 'subject','target'
-		salt_filter = np.any([
-			np.all([
-				bonds[:,rowspec.index('%s_resname'%this)]==salt_bridge_donor['resname'],
-				np.in1d(bonds[:,rowspec.index('%s_atom'%this)],salt_bridge_donor['atoms']),
-				lipid_selection,
-				],axis=0)
-			# loop over donors only
-			for salt_bridge_donor in self.defn_salt_bridges_protein['donor']
-			],axis=0)
-		return salt_filter
-
+from calcs.codes.salt_bridge_definitions import SaltBridge
 from ortho import importer,uniform,tracebacker
-from calcs.codes.consts import residue_codes
+from calcs.codes.consts import residue_codes,protein_residues
 from omni import picturesave,status
 from omni import subdivide_trajectory,zoom_figure,PostAccumulator
 
@@ -167,10 +91,10 @@ def compute_protein_lipid_bonds(sn,scoring_method,trim=True,kind=None,**kwargs):
 		residue_lipid_filter = np.any((
 			np.all((np.in1d(bonds_this[:,rowspec_this.index('subject_resname')],lipid_this),
 				np.in1d(bonds_this[:,rowspec_this.index('target_resname')],
-					list(residue_codes.keys()))),axis=0),
+					protein_residues)),axis=0),
 			np.all((np.in1d(bonds_this[:,rowspec_this.index('target_resname')],lipid_this),
 				np.in1d(bonds_this[:,rowspec_this.index('subject_resname')],
-					list(residue_codes.keys()))),axis=0),
+					protein_residues)),axis=0),
 			),axis=0)
 		if kind=='salt_bridges':
 			salt_filter = SaltBridge().filter_salt_bridges_protein_lipid(
@@ -541,12 +465,13 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 								bonds_this = bonds[inds]
 								obs_this = obs[:,inds]
 								if np.any(np.in1d(bonds_this[:,
-									rowspec_this.index('target_resname')],list(residue_codes.keys()))):
+									rowspec_this.index('target_resname')],protein_residues)):
 									raise Exception('salt bridge inconsistency. '
 										'we expect this to be one-sided')
 							elif kind=='hydrogen_bonds': 
 								this = np.any([np.all([np.in1d(bonds[:,
-									rowspec_this.index(['target_resname','subject_resname'][i])],[lipid_resnames,list(residue_codes.keys())][j]) 
+									rowspec_this.index(['target_resname','subject_resname'][i])],
+										[lipid_resnames,protein_residues][j]) 
 									for i,j in k],axis=0) 
 								for k in [[(0,0),(1,1)],[(0,1),(1,0)]]],axis=0)
 								inds = np.where(this)[0]
@@ -598,7 +523,7 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 						#!   'target_resname','subject_resname'][i])],
 						#!   [lipid_resnames,residue_codes.keys()][j])
 						# do not forget to turn dict keys into a list before in1d
-						this = np.any([np.all([np.in1d(bonds[:,rowspec_this.index(['target_resname','subject_resname'][i])],[lipid_resnames,list(residue_codes.keys())][j]) 
+						this = np.any([np.all([np.in1d(bonds[:,rowspec_this.index(['target_resname','subject_resname'][i])],[lipid_resnames,protein_residues][j]) 
 							for i,j in k],axis=0) for k in [[(0,0),(1,1)],[(0,1),(1,0)]]],axis=0)
 						inds = np.where(this)[0]
 						# popped this above for the subselection
@@ -637,8 +562,10 @@ def plot_protein_lipid_histograms(sns,kind,scoring_method,**kwargs):
 				backup=False,version=True,meta=meta,
 				extras=[],dpi=300,form='png')
 
-### REFACTORING THIS BELOW
-if __name__=='__main__' and 0: 
+#! legacy plots are being refactored below
+do_legacy_plots = False
+
+if __name__=='__main__' and do_legacy_plots: 
 
 	"""
 	Note two styles for plot scripts: ones with @function decorators are 
@@ -1249,9 +1176,10 @@ if __name__=='__main__' and 0:
 				meta={'sns':sns_this,'survey':survey},
 				extras=extras,dpi=300,form='png')
 
-def compute_histograms(sn):
+def prepare_span(sn):
 	"""
-	Generate bond distributions.
+	Prepare a combination of hydrogen bond and salt bridge data.
+	Do not forget to set the correct data cursor.
 	"""
 	# prepare the data
 	span = {}
@@ -1264,6 +1192,30 @@ def compute_histograms(sn):
 	# assemble these data
 	span['salt_bridges'] = {'bonds':bonds,'obs':obs,'rowspec':rowspec_salt}
 	span['hydrogen_bonds'] = {'bonds':bonds_h,'obs':obs_h,'rowspec':rowspec_hbonds}
+	return span
+
+def span_to_protein_residues(span):
+	"""Get all protein residues from a span of bond data."""
+	residues = []
+	for name in span:
+		rowspec = span[name]['rowspec']
+		for key in ['subject','target']:
+			cols = [i%key for i in ['%s_resname','%s_resid']]
+			residues.extend(span[name]['bonds'][:,np.array([rowspec.index(c) for c in cols])])
+	residues = [(i,j) for i,j in residues if i in protein_residues]
+	residues = np.unique(np.array(residues).astype(str),axis=0)
+	# cheap sort
+	residues = np.array(sorted(residues,key=lambda x:x[1]))
+	return residues
+
+def compute_histograms(sn,method='count_bound_lipids',protein_residue_target=None):
+	"""
+	Generate bond distributions.
+	"""
+	if isinstance(protein_residue_target,type(None)) and method!='filter_protein': 
+		raise Exception('incompatible')
+	# prepare the data
+	span = prepare_span(sn)
 
 	# first reduction: remove the atoms
 	col_targets = ['subject_resname','subject_resid','target_resname','target_resid']
@@ -1284,7 +1236,7 @@ def compute_histograms(sn):
 		resname_cols = [col_targets.index(i) for i in ['subject_resname','target_resname']]
 		# get the number of protein residues or lipids in each row
 		has_protein,has_lipid = [np.sum([np.in1d(bonds_this[:,i],group)*1 
-			for i in resname_cols],axis=0) for group in [protein_resnames,lipid_resnames]]
+			for i in resname_cols],axis=0) for group in [protein_residues,lipid_resnames]]
 		# consistency check: two items in a pair
 		if np.any((has_protein+has_lipid)!=2.): raise Exception('inconsistent pairs')
 		# filter here for a single protein and lipid in each pair
@@ -1320,13 +1272,31 @@ def compute_histograms(sn):
 	#   see the "two items in a pair" consistency check and the following filter
 	resname_cols = [col_targets.index(i) for i in ['subject_resname','target_resname']]
 	# when to reverse so the first column is a protein
-	idx_sym_r = np.in1d(bonds_u[:,resname_cols[1]],protein_resnames)*1
+	idx_sym_r = np.in1d(bonds_u[:,resname_cols[1]],protein_residues)*1
 	# flip the bond list so the columns are protein, then resname
 	# be very careful when reindexing: you have to swap the rows in separate brackets
 	# note that a minor error in the original code was corrected later, but there was a
 	#   minor discrepancy with the original results that took effort to confirm. this was
 	#   only a problem because so few records needed to be flipped in the first place
 	bonds_u[np.where(idx_sym_r)] = bonds_u[np.where(idx_sym_r)][:,np.array([2,3,0,1])]
+
+	if method=='filter_protein':
+
+		"""
+		The "count_bound_lipids" method below does a further reduction and counts lipids bound to the 
+		entire peptide. in this section we drill down to one protein. note that we are still only counting
+		one or more residue-lipid bonds from the same residue as a "1" in our scoring metric
+		later we will relax this in the np.add.at stage
+		"""
+
+		# subselect bonds for this protein
+		subsel = np.where(np.all(bonds_u[:,:2]==protein_residue_target,axis=1))[0]
+		bonds_u = bonds_u[subsel]
+		# filter the entire stack
+		obs_prev_stack = obs_new_stack
+		obs_new_stack = []
+		for obs_this in obs_prev_stack:
+			obs_new_stack.append(obs_this[:,subsel])
 
 	"""
 	STATUS
@@ -1345,7 +1315,9 @@ def compute_histograms(sn):
 	# fourth reduce step: discard the protein side
 	if do_discard_protein:
 		col_nums = [col_targets.index(i) for i in ['target_resname','target_resid']]
-		bonds_lipids_u,lookups_lipids = np.unique(bonds_u[:,col_nums],axis=0,return_inverse=True)
+		try: bonds_lipids_u,lookups_lipids = np.unique(bonds_u[:,col_nums],axis=0,return_inverse=True)
+		#! dangerous?
+		except: return None
 		ntargets = len(bonds_lipids_u)
 		# compared to last time, we only have one bonds list
 		bonds_this = bonds_u
@@ -1419,8 +1391,7 @@ def compute_histograms(sn):
 	else: nframes = nframes[0]
 
 	def histograms_by_kind(decomp):
-		"""
-		"""
+		"""Generate histograms from trajectories of bond counts. This must happen at the very end."""
 		hists_by_lipid,counts_by_lipid = [],[]
 		for knum,kind in enumerate(lipid_kinds):
 			counts = np.array([d[:,kind_subsel[knum]].sum(axis=1) for d in decomp]).astype(int)
@@ -1474,7 +1445,6 @@ if __name__=='__main__':
 
 	do_discard_protein = True
 	do_scale_histograms_by_frame = True
-	include_zero = 1
 
 	# globals used for plotting and calculations
 	#! move this to the loader
@@ -1483,63 +1453,12 @@ if __name__=='__main__':
 	#! do not forget cholesterol
 	#! go fix the Landscape in automacs
 	lipid_resnames = ['DOPC', 'DOPS', 'POPC', 'DOPE', 'SAPI', 'PI2P']+['CHL1']
-	#! preempt problems using dict_keys in in1d
-	protein_resnames = list(residue_codes.keys())
 
 	# identify the target data
 	cutoff = 3.4
 	data.set('contacts',select={'cutoff':cutoff,
 		'target':{'predefined':'lipid heavy'},
 		'subject':{'predefined':'protein heavy'}})
-
-	### recapitulate these below and then retire them!
-	# single combined plot
-	if 0:
-		hists_by_lipid,bins = histograms_by_kind(decomp)
-		ind0 = 0 if include_zero else 1
-		fig = plt.figure(figsize=(8,8))
-		ax = fig.add_subplot(111)
-		bottom = np.zeros(len(bins)-1)
-		for lipid_resname in lipid_stack_order:
-			#! this is the site of a costly error where we summed histograms
-			heights = hists_by_lipid[list(kinds).index(lipid_resname)]
-			#! now that this is fixed, the hist.sum() is always the number of frames
-			ax.bar(bins[ind0:-1],heights[ind0:],bottom=bottom[ind0:],
-				color=lipid_colors[lipid_resname],width=1.0)
-			bottom += heights
-		ax.set_xticks(range(ind0,bins.max()))
-		ax.set_xlim((ind0-0.5,bins.max()-0.5))
-		picturesave('DEVFIG2',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
-	# decomposition plot panel
-	if 0:
-		figdim = 2.5
-		fig,axes = plt.subplots(nrows=1,ncols=5,figsize=(figdim*5,figdim))
-		plt.subplots_adjust(wspace=0.5)
-		for axnum,(name,decomp_this) in enumerate(decomps):
-			ax = axes[axnum]
-			decomp_out = [decomp[decomp_order.index(i)] for i in decomp_this]
-			hists_by_lipid,bins = histograms_by_kind(decomp_out)
-			ax.set_title(name)
-			ind0 = 0 if include_zero else 1
-			bottom = np.zeros(len(bins)-1)
-			for lipid_resname in lipid_stack_order:
-				#! this is the site of a costly error where we summed histograms
-				heights = hists_by_lipid[list(kinds).index(lipid_resname)]
-				#! now that this is fixed, the hist.sum() is always the number of frames
-				ax.bar(bins[ind0:-1],heights[ind0:],bottom=bottom[ind0:],
-					color=lipid_colors[lipid_resname],width=1.0)
-				bottom += heights
-			ax.set_xticks(range(ind0,bins.max()))
-			ax.set_xlim((ind0-0.5,bins.max()-0.5))
-			ax.set_xlabel('bound lipids')
-			ax.set_ylabel('observations per frame')
-			ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
-			ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
-		picturesave('DEVFIG3',work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
-
-	#!!! before deleting the above, resolve the inconsistency between
-	#!!!   file:///Users/rpb/worker/lola/spot/actinlink/plot/DEVFIG3.v1.png
-	#!!!   and file:///Users/rpb/worker/lola/spot/actinlink/plot/fig.histograms.mdia2.decompose.v1.png
 
 	# supergroup names must be in the metadata collections
 	supergroups = ['mdia2','gelsolin','nwasp']
@@ -1586,7 +1505,10 @@ if __name__=='__main__':
 		"""
 		sg = kwargs.pop('supergroup',None)
 		style = kwargs.pop('style',None)
+		residues = kwargs.pop('residues',None)
+		decomp_style = kwargs.pop('decomp_style',None)
 		if kwargs: raise Exception('unprocessed kwargs: %s'%kwargs)
+
 		# vertical plot with conditions on the rows and replicats on the columns
 		if style=='rows_condition_cols_replicate':
 			figdim = 3
@@ -1605,6 +1527,7 @@ if __name__=='__main__':
 				for ss,s in enumerate(merge_rule[c]):
 					axes_map[s] = axes[cc][ss]
 			panels = dict(axes=axes,fig=fig,axes_map=axes_map)
+
 		# panel plot with simulations (rows) and decomposition style (columns)
 		elif style=='rows_simulation_cols_decomp':
 			figdim = 3
@@ -1619,31 +1542,75 @@ if __name__=='__main__':
 				for dnum,d in enumerate(decomps_order):
 					axes_map[(sn,'decomp',d)] = axes[snum][dnum]
 			panels = dict(axes=axes,fig=fig,axes_map=axes_map)
+
+		# panel plot with protein residues on the rows and simulations on the column
+		elif style=='rows_residue_cols_simulation':
+			figdim = 3
+			sns = work.metadata.collections[sg]
+			nrows,ncols = len(residues)+1,len(sns)
+			fig,axes = plt.subplots(nrows=nrows,ncols=ncols,figsize=(figdim*ncols,figdim*nrows))
+			plt.subplots_adjust(wspace=0.6)
+			plt.subplots_adjust(hspace=0.6)
+			# map the simulations onto axes here
+			axes_map = {}
+			for snum,sn in enumerate(sns):
+				# top row is the "all" column
+				# note that mixing of the different data types happens here instead of in the plot
+				#   function. the heterogeneous nature of the data justifies our use of the 
+				#   "get the data here" section of the plot_histograms function below
+				axes_map[(sn,'decomp',decomp_style)] = axes[0][snum]
+				for rnum,(i,j) in enumerate(residues):
+					axes_map[(sn,'decomp',decomp_style,'res',i,j)] = axes[rnum+1][snum]
+			panels = dict(axes=axes,fig=fig,axes_map=axes_map)
+
 		else: raise Exception('invalid panel style: %s'%style)
 		return panels
 
-	def plot_histograms(panels,figname):
+	def plot_histograms(panels,figname,include_zero=True,uniform_max=False):
 		fig = panels['fig']
+		max_count = 0
+		del_axes = []
 		do_decomp_label = False
-		global post
 		# plot histograms for each axis
-		for sn,ax in panels['axes_map'].items():
+		for sn_base,ax in panels['axes_map'].items():
+
+			# get the data here
+			#! the following is a prototype for a score method multiplexer
+			global post,post_protein
 			# identify the correct set of results
-			if isinstance(sn,tuple) and len(sn)==3 and sn[1]=='decomp':
-				sn,decomp_style = sn[0],sn[2]
+			if isinstance(sn_base,tuple) and len(sn_base)==3 and sn_base[1]=='decomp':
+				sn,decomp_style = sn_base[0],sn_base[2]
 				do_decomp_label = True
-			elif isinstance(sn,tuple):
-				raise Exception('cannot interpret plot target: %s'%str(sn))
+				post_this = post[sn]
+			elif isinstance(sn_base,tuple) and len(sn_base)==6:
+				if sn_base[1]=='decomp' and sn_base[3]=='res':
+					res_id = (sn_base[4],sn_base[5])
+					sn,decomp_style = sn_base[0],sn_base[2]
+					post_this = post_protein[sn][res_id]
+				else: raise Exception('invalid')
+			elif isinstance(sn_base,tuple):
+				raise Exception('cannot interpret plot target: %s'%str(sn_base))
 			# by default we include hydrogen bonds and salt bridges
-			else: decomp_style = 'both'
-			# retrieve the data now that we know the decomposition style
-			hists_by_lipid,bins,counts_by_lipid,lipid_kinds = [
-				post[sn]['histograms'][decomp_style][i]
+			else: 
+				sn = sn_base
+				decomp_style = 'both'
+				post_this = post[sn_original]
+	
+			# retrieve the data now that we selected the post and decomp
+			try: hists_by_lipid,bins,counts_by_lipid,lipid_kinds = [
+				post_this['histograms'][decomp_style][i]
 				for i in 'hists_by_lipid,bins,counts_by_lipid,lipid_kinds'.split(',')]
+			#! see "dangerous" above
+			except:
+				del_axes.append(sn_base)
+				continue
+
+			# begin plotting here			
 			ax.set_title(work.metadata.meta[sn]['label_compact'])
 			ind0 = 0 if include_zero else 1
 			bottom = np.zeros(len(bins)-1)
 			for lipid_resname in lipid_stack_order:
+				if lipid_resname not in lipid_kinds: continue
 				heights = hists_by_lipid[list(lipid_kinds).index(lipid_resname)]
 				# note that the sum of the heights should be 1.0 after we divide by frames
 				# note that order matters: only histogram after you sum particular bond types
@@ -1661,6 +1628,13 @@ if __name__=='__main__':
 				ax_r.set_ylabel(decomps_titles[decomp_style],rotation=-90,labelpad=20.)
 			ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
 			ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
+			if uniform_max:
+				max_count = max([max(bins[:-1]),max_count])
+		if uniform_max:
+			for sn,ax in panels['axes_map'].items():
+				ax.set_xlim((0,max_count))
+		for sn in del_axes:
+			fig.delaxes(panels['axes_map'][sn])
 		picturesave(figname,work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
 
 	if 'post' not in globals():
@@ -1686,3 +1660,24 @@ if __name__=='__main__':
 		panels = prepare_panels(style='rows_simulation_cols_decomp',
 			supergroup='mdia2')
 		plot_histograms(panels=panels,figname='fig.histograms.mdia2.decompose')
+
+	###!!! DEV: protein plot
+
+	# get the residues for this supergroup
+	data.set('contacts',select={'cutoff':cutoff,
+		'target':{'predefined':'lipid heavy'},
+		'subject':{'predefined':'protein heavy'}})
+	if 'post_protein' not in globals():
+		post_protein = {}
+		for sn in work.metadata.collections[sg]:
+			span = prepare_span(sn)
+			residues = span_to_protein_residues(span)
+			post_protein[sn] = {}
+			for res in residues:
+				status('computing histograms for %s: %s'%(sn,str(tuple(res))))
+				result = compute_histograms(sn,method='filter_protein',protein_residue_target=res)
+				post_protein[sn][tuple(res)] = result
+	panels = prepare_panels(style='rows_residue_cols_simulation',decomp_style='both',
+		residues=residues,supergroup='mdia2')
+	plot_histograms(panels=panels,include_zero=False,uniform_max=True,
+		figname='fig.histograms.mdia2.residues.hydrogen_bonds_salt_bridges')
