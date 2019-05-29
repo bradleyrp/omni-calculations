@@ -1322,6 +1322,10 @@ def compute_histograms(sn):
 	# when to reverse so the first column is a protein
 	idx_sym_r = np.in1d(bonds_u[:,resname_cols[1]],protein_resnames)*1
 	# flip the bond list so the columns are protein, then resname
+	# be very careful when reindexing: you have to swap the rows in separate brackets
+	# note that a minor error in the original code was corrected later, but there was a
+	#   minor discrepancy with the original results that took effort to confirm. this was
+	#   only a problem because so few records needed to be flipped in the first place
 	bonds_u[np.where(idx_sym_r)] = bonds_u[np.where(idx_sym_r)][:,np.array([2,3,0,1])]
 
 	"""
