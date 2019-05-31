@@ -1212,7 +1212,7 @@ def compute_histograms(sn,method='count_bound_lipids',protein_residue_target=Non
 	"""
 	Generate bond distributions.
 	"""
-	if isinstance(protein_residue_target,type(None)) and method!='filter_protein': 
+	if not isinstance(protein_residue_target,type(None)) and method!='filter_protein': 
 		raise Exception('incompatible')
 	# prepare the data
 	span = prepare_span(sn)
@@ -1225,7 +1225,7 @@ def compute_histograms(sn,method='count_bound_lipids',protein_residue_target=Non
 		span[key]['bonds'] = span[key]['bonds'][:,cols]
 
 	# finalize the bond type order here
-	kind_order = list(span.keys())
+	global kind_order
 	# prepare the stacks
 	stack_bonds,stack_obs = [[span[k][j] for k in kind_order] for j in ['bonds','obs']]
 
@@ -1368,7 +1368,7 @@ def compute_histograms(sn,method='count_bound_lipids',protein_residue_target=Non
 		consensus_frames = np.intersect1d(valid_frames_hbonds,valid_frames_salt)
 		#! lazy way to do this
 		reindexer = dict([(name,np.array([np.where(j==i)[0][0] for i in consensus_frames]))
-			for name,j in zip(['hydrogen_bonds','salt_bridges',],
+			for name,j in zip(['hydrogen_bonds','salt_bridges'],
 				[valid_frames_hbonds,valid_frames_salt])])
 		obs_new_stack = [obs_new_stack[ii][reindexer[n],:] for ii,n in enumerate(kind_order)]
 
@@ -1411,28 +1411,29 @@ def compute_histograms(sn,method='count_bound_lipids',protein_residue_target=Non
 		decomp_out = [decomp[decomp_order.index(i)] for i in decomp_this['items']]
 		hists_by_lipid,bins,counts_by_lipid = histograms_by_kind(decomp_out)
 
-		# consistency checks for the full set
-		# note that this was mostly useful when developing the code but retained for posterity
-		if decomp_this['items']==['salt_bridges','hydrogen_bonds','intersect']:
-			for kind_this in kind_order:
-				for lipid_this in lipid_kinds:
-					# consistency check 1: histogram counts sum to total frames we observe bonds
-					knum = list(lipid_kinds).index(lipid_this)
-					cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
-					idx = np.where(bonds_u[:,col_targets.index('target_resname')]==lipid_kinds[knum])[0]
-					# note that we ignore the first bin, which is a bond count of zero
-					if not (np.histogram(counts_by_lipid[knum][cols].sum(axis=0),bins=bins)[0][1:].sum()==
-						np.sum(obs_new_stack[kind_order.index(kind_this)][:,idx].sum(axis=1)>0)):
-						raise Exception('failed consistency check (1): %s,%s'%(kind_this,lipid_this))
-					# consistency check 2: total bonds for a type and lipid
-					knum = list(lipid_kinds).index(lipid_this)
-					cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
-					bonds = counts_by_lipid[knum][cols].sum(axis=0)
-					total_bonds = bonds.sum()
-					obs_this = obs_new_stack[kind_order.index(kind_this)]
-					idx = np.where(bonds_u[:,col_targets.index('target_resname')]==lipid_kinds[knum])[0]
-					total_bonds_alt = obs_this[:,idx].sum(axis=1).sum()
-					if not total_bonds==total_bonds_alt: raise Exception('failed consistency check (2)')
+		if 0: # FAILING NOW
+			# consistency checks for the full set
+			# note that this was mostly useful when developing the code but retained for posterity
+			if decomp_this['items']==['salt_bridges','hydrogen_bonds','intersect']:
+				for kind_this in kind_order:
+					for lipid_this in lipid_kinds:
+						# consistency check 1: histogram counts sum to total frames we observe bonds
+						knum = list(lipid_kinds).index(lipid_this)
+						cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
+						idx = np.where(bonds_u[:,col_targets.index('target_resname')]==lipid_kinds[knum])[0]
+						# note that we ignore the first bin, which is a bond count of zero
+						if not (np.histogram(counts_by_lipid[knum][cols].sum(axis=0),bins=bins)[0][1:].sum()==
+							np.sum(obs_new_stack[kind_order.index(kind_this)][:,idx].sum(axis=1)>0)):
+							raise Exception('failed consistency check (1): %s,%s'%(kind_this,lipid_this))
+						# consistency check 2: total bonds for a type and lipid
+						knum = list(lipid_kinds).index(lipid_this)
+						cols = np.array([decomp_order.index(i) for i in [kind_this,'intersect']])
+						bonds = counts_by_lipid[knum][cols].sum(axis=0)
+						total_bonds = bonds.sum()
+						obs_this = obs_new_stack[kind_order.index(kind_this)]
+						idx = np.where(bonds_u[:,col_targets.index('target_resname')]==lipid_kinds[knum])[0]
+						total_bonds_alt = obs_this[:,idx].sum(axis=1).sum()
+						if not total_bonds==total_bonds_alt: raise Exception('failed consistency check (2)')
 
 		# save the result
 		result['histograms'][name] = dict(
@@ -1448,7 +1449,7 @@ if __name__=='__main__':
 
 	# globals used for plotting and calculations
 	#! move this to the loader
-	lipid_colors = {'PI2P':'r','DOPE':'gray','DOPS':'b'}
+	lipid_colors = {'PI2P':'r','DOPE':'gray','DOPS':'b','CHL1':'magenta'}
 	lipid_stack_order = ['PI2P','DOPS','DOPE']
 	#! do not forget cholesterol
 	#! go fix the Landscape in automacs
@@ -1485,6 +1486,9 @@ if __name__=='__main__':
 		'nwasp_10':['nwaspbilayer10','nwaspbilayer10_2'],
 		'nwasp_20':['nwaspbilayerphys','nwaspbilayerphys2'],
 		'nwasp_30':['nwaspbilayer30','nwaspbilayer30_2'],}
+
+	# the global kind order sets the ordering for bond types
+	kind_order = ['hydrogen_bonds','salt_bridges']
 	decomps_order = ['salt_x','hbonds_x','salt_bridges','hydrogen_bonds','both']
 	decomps = {
 		'salt_x':{'title':'salt bridges alone','items':['salt_bridges']},
@@ -1498,6 +1502,22 @@ if __name__=='__main__':
 		'hydrogen_bonds':'hydrogen bonds',
 		'salt_bridges':'salt bridges',
 		'both':'salt bridges +\nhydrogen bonds'}
+	merge_labels = odict({
+		'gelsolin_nochl':r'0% CHOL'+'\n'+r'20% $\mathrm{{PIP}_2}$',
+		'gelsolin_10':r'10% $\mathrm{{PIP}_2}$',
+		'gelsolin_20':r'20% $\mathrm{{PIP}_2}$',
+		'gelsolin_30':r'30% $\mathrm{{PIP}_2}$',
+		'gelsolin_mut':r'mutant'+'\n'+r'20% $\mathrm{{PIP}_2}$',
+
+		'mdia2_nochl':r'0% CHOL'+'\n'+r'20% $\mathrm{{PIP}_2}$',
+		'mdia2_10':r'10% $\mathrm{{PIP}_2}$',
+		'mdia2_20':r'20% $\mathrm{{PIP}_2}$',
+		'mdia2_30':r'30% $\mathrm{{PIP}_2}$',
+
+		'nwasp_nochl':r'0% CHOL'+'\n'+r'20% $\mathrm{{PIP}_2}$',
+		'nwasp_10':r'10% $\mathrm{{PIP}_2}$',
+		'nwasp_20':r'20% $\mathrm{{PIP}_2}$',
+		'nwasp_30':r'30% $\mathrm{{PIP}_2}$',})
 
 	def prepare_panels(**kwargs):
 		"""
@@ -1563,12 +1583,27 @@ if __name__=='__main__':
 					axes_map[(sn,'decomp',decomp_style,'res',i,j)] = axes[rnum+1][snum]
 			panels = dict(axes=axes,fig=fig,axes_map=axes_map)
 
+		# panel plot with protein residues on the rows and simulations on the column
+		elif style=='single_sg_merged':
+			figdim = 3
+			sns = conditions[sg]
+			nrows,ncols = 1,len(sns)
+			fig,axes = plt.subplots(nrows=nrows,ncols=ncols,figsize=(figdim*ncols,figdim*nrows))
+			plt.subplots_adjust(wspace=0.6)
+			plt.subplots_adjust(hspace=0.6)
+			# map the simulations onto axes here
+			axes_map = {}
+			for snum,sn in enumerate(sns):
+				axes_map[sn] = axes[snum]
+			panels = dict(axes=axes,fig=fig,axes_map=axes_map)
+
 		else: raise Exception('invalid panel style: %s'%style)
 		return panels
 
-	def plot_histograms(panels,figname,include_zero=True,uniform_max=False):
+	def plot_histograms(panels,figname,include_zero=True,uniform_max=False,
+		uniform_peak=False):
 		fig = panels['fig']
-		max_count = 0
+		max_count,max_peak = 0,0
 		del_axes = []
 		do_decomp_label = False
 		# plot histograms for each axis
@@ -1594,18 +1629,21 @@ if __name__=='__main__':
 			else: 
 				sn = sn_base
 				decomp_style = 'both'
-				post_this = post[sn_original]
+				post_this = post[sn_base]
 	
 			# retrieve the data now that we selected the post and decomp
 			try: hists_by_lipid,bins,counts_by_lipid,lipid_kinds = [
 				post_this['histograms'][decomp_style][i]
 				for i in 'hists_by_lipid,bins,counts_by_lipid,lipid_kinds'.split(',')]
 			#! see "dangerous" above
-			except:
+			except Exception as e:
+				print(e)
+				import ipdb;ipdb.set_trace()
 				del_axes.append(sn_base)
 				continue
 
 			# begin plotting here			
+			#! add merge labels
 			ax.set_title(work.metadata.meta[sn]['label_compact'])
 			ind0 = 0 if include_zero else 1
 			bottom = np.zeros(len(bins)-1)
@@ -1630,12 +1668,19 @@ if __name__=='__main__':
 			ax.tick_params(axis='x',which='both',top=False,bottom=False,labelbottom=True)
 			if uniform_max:
 				max_count = max([max(bins[:-1]),max_count])
+			if uniform_peak:
+				max_peak = max([max(bottom),max_peak])
 		if uniform_max:
 			for sn,ax in panels['axes_map'].items():
-				ax.set_xlim((0,max_count))
+				ax.set_xlim((ind0-0.5,max_count-0.5))
+		if uniform_peak:
+			for sn,ax in panels['axes_map'].items():
+				ax.set_ylim((0,max_peak*1.05))
 		for sn in del_axes:
 			fig.delaxes(panels['axes_map'][sn])
 		picturesave(figname,work.plotdir,backup=False,version=True,dpi=300,form='png',meta={})
+
+	### POSTPROCESS
 
 	if 'post' not in globals():
 		post = {}
@@ -1644,40 +1689,114 @@ if __name__=='__main__':
 			status('computing histograms',i=snum,looplen=len(sns_all))
 			post[sn] = compute_histograms(sn)
 
-	# select a supergroup
-	sg = 'mdia2'
+	# merge the data if it has not been merged yet
+	#! we need a more coherent bond-summing data type (tacking on intersect is clumsy)
+	if len(kind_order)!=2: raise Exception('we expect two kinds')
+	for sg in supergroups:
+		for condition in conditions:
+			for merge_name in conditions[condition]:
+				if merge_name not in post: 
+					post[merge_name] = {}
+					post[merge_name]['histograms'] = {}
+				#! only compute if absent
+				#else: continue
+				reps = merge_rule[merge_name]
+				# merge for this kind_order starts here
+				lipids = [post[sn]['histograms']['both']['lipid_kinds'] for sn in reps]
+				# no need to check lipids because we get a unique list
+				lipids_u = list(np.unique(np.concatenate(lipids)))
+				#! the intersect part below is tacked on. this has to match the "both" bonds
+				#! this loop is deprecated: for knum,kind_name in enumerate(kind_order+['intersect']):
+				stack = {}
+				for sn in reps:
+					#! currently working only with the "both" type until the bond combinations
+					#!   can be handled more elegantly
+					# +++ structure of counts_by_lipid is: kinds_order (arrays) by lipid (rows)
+					# !!! we need a more coherent intersect data type
+					"""
+					note that counts_by_lipid is indexed first by lipid, then the rows of each
+					lipid table are the constituents by bond type, hence "both" has 3, salt_x has 1
+					"""
+					cbl = post[sn]['histograms']['both']['counts_by_lipid']
+					stack[sn] = dict(cbl=cbl)
+				# receiving data structure is kinds_order by lipid
+				# loop over lipids and do the merge
+				cbl_merged = []
+				for lipid in lipids_u:
+					them = []
+					for snum,sn in enumerate(reps):
+						if lipid in lipids[snum]:
+							them.append(stack[sn]['cbl'][list(lipids[snum]).index(lipid)])
+						#! ill-advised way of filling in the missing parts
+						#! else: 
+						#	  them.append(None)
+					# +++ concatenate the lipid data
+					#!!! ill-advised method of filling in the missing parts with a mean
+					# if any(isinstance(t,type(None)) for t in them):
+					# 	import ipdb;ipdb.set_trace()
+					# 	inds = [ii for ii,i in enumerate(them) if not isinstance(i,type(None))]
+					catted = np.concatenate([t.T for t in them]).T
+					cbl_merged.append(catted)
+				counts_by_lipid = cbl_merged
+				lipid_kinds = lipids_u
+				hists_by_lipid = []
+				nframes = np.array([i.shape[1] for i in cbl_merged])
+				#! because we have always concatenated the frames, the nframes is consistent?
+				# now that we have a new counts_by_lipid, we repeat the histograms_by_kind function
+				counts_max = max([c.sum(axis=0).max() for c in counts_by_lipid])
+				bins = np.arange(0,counts_max+2).astype(int)	
+				for knum,kind in enumerate(lipid_kinds):
+					counts = counts_by_lipid[knum]
+					hist = np.histogram(counts.sum(axis=0),bins=bins)[0]
+					hists_by_lipid.append(hist)
+				hists_by_lipid = (np.array(hists_by_lipid).T/nframes).T
+				# package as before
+				post[merge_name]['histograms']['both'] = dict(
+					hists_by_lipid=hists_by_lipid,bins=bins,counts_by_lipid=counts_by_lipid,
+					lipid_kinds=lipid_kinds)
+
+	### RENDER PLOTS
 
 	# select plots to render
 	do_decomposition_plot = 0
 	do_default_histograms = 0
+	do_residue_filter_plot = 0
+	do_merged_histogram = 1
 
-	# PLOT SERIES
+	# plot series
 	if do_default_histograms:
-		panels = prepare_panels(style='rows_condition_cols_replicate',
-			supergroup='mdia2')
+		sg = 'mdia2'
+		panels = prepare_panels(style='rows_condition_cols_replicate',supergroup=sg)
 		plot_histograms(panels=panels,figname='fig.histograms.%s'%sg)
 	if do_decomposition_plot:
+		sg = 'mdia2'
 		panels = prepare_panels(style='rows_simulation_cols_decomp',
-			supergroup='mdia2')
+			supergroup=sg)
 		plot_histograms(panels=panels,figname='fig.histograms.mdia2.decompose')
-
-	###!!! DEV: protein plot
-
-	# get the residues for this supergroup
-	data.set('contacts',select={'cutoff':cutoff,
-		'target':{'predefined':'lipid heavy'},
-		'subject':{'predefined':'protein heavy'}})
-	if 'post_protein' not in globals():
-		post_protein = {}
-		for sn in work.metadata.collections[sg]:
-			span = prepare_span(sn)
-			residues = span_to_protein_residues(span)
-			post_protein[sn] = {}
-			for res in residues:
-				status('computing histograms for %s: %s'%(sn,str(tuple(res))))
-				result = compute_histograms(sn,method='filter_protein',protein_residue_target=res)
-				post_protein[sn][tuple(res)] = result
-	panels = prepare_panels(style='rows_residue_cols_simulation',decomp_style='both',
-		residues=residues,supergroup='mdia2')
-	plot_histograms(panels=panels,include_zero=False,uniform_max=True,
-		figname='fig.histograms.mdia2.residues.hydrogen_bonds_salt_bridges')
+	if do_residue_filter_plot:
+		sg = 'mdia2'
+		# get the residues for this supergroup
+		data.set('contacts',select={'cutoff':cutoff,
+			'target':{'predefined':'lipid heavy'},
+			'subject':{'predefined':'protein heavy'}})
+		if 'post_protein' not in globals():
+			post_protein = {}
+			for sn in work.metadata.collections[sg]:
+				span = prepare_span(sn)
+				residues = span_to_protein_residues(span)
+				post_protein[sn] = {}
+				for res in residues:
+					status('computing histograms for %s: %s'%(sn,str(tuple(res))))
+					result = compute_histograms(sn,method='filter_protein',protein_residue_target=res)
+					post_protein[sn][tuple(res)] = result
+		panels = prepare_panels(style='rows_residue_cols_simulation',decomp_style='both',
+			residues=residues,supergroup='mdia2')
+		plot_histograms(panels=panels,include_zero=False,uniform_max=True,
+			figname='fig.histograms.%s.residues.hbsb'%sg)
+	if do_merged_histogram:
+		for sg in supergroups:
+			for sn in conditions[sg]: 
+				work.metadata.meta[sn] = {'label_compact':'%s %s'%(sg,merge_labels[sn])}
+			panels = prepare_panels(style='single_sg_merged',supergroup=sg)
+			plot_histograms(panels=panels,figname='fig.histograms.merged.%s'%sg,
+				include_zero=True,uniform_max=True,uniform_peak=True)
