@@ -16,6 +16,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from omni.base.store import picturesave
+from omni.legacy.panels import panelplot
 
 #---plotting environment
 import builtins
@@ -62,14 +63,15 @@ def center_by_protein(sn,surfs,static=False,exclude_hydrogen=False):
 		shift_this = reindexer+(shift-(np.array([nx,ny])/2.0).astype(int))
 		return surf[shift_this.T[0]%nx,shift_this.T[1]%ny].reshape((nx,ny))
 
-def add_colorbar(ax,im,title,title_top=True):
+def add_colorbar(ax,im,title,title_top=True,shift_up=1.1):
 	#---colorbar
 	axins = inset_axes(ax,width="5%",height="100%",loc=3,
 		bbox_to_anchor=(1.05,0.,1.,1.),bbox_transform=ax.transAxes,borderpad=0)
 	cbar = plt.colorbar(im,cax=axins,orientation="vertical")
 	if not title_top: axins.set_ylabel(title,rotation=270,labelpad=20)
-	else: cbar.set_label(title,labelpad=-20,y=1.1,rotation=0)
+	else: cbar.set_label(title,labelpad=-20,y=shift_up,rotation=0)
 	axins.tick_params(axis='y',left=False,right=False,labelright=True)
+	return cbar
 
 def plot_hull_and_trial_centers(data,sn,ax,n_instances=None,debug_frame=0,color=None):
 	"""Plot the protein hull along with the positions of the trial functions."""
@@ -112,6 +114,11 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 	"""
 	Loop over all upstream curvature-undulation coupling calculations and plot a panel of review plots.
 	"""
+	max_curvature_overall = kwargs.pop('max_curvature_overall',None)
+	use_instantaneous_grid_on_average = kwargs.pop('use_instantaneous_grid_on_average',False)
+	custom_cbar = kwargs.pop('custom_cbar',False)
+	panelplot_layout = kwargs.pop('panelplot_layout',None)
+	tickoff = kwargs.pop('tickoff',True)
 	report = {}
 	#---seeping namespace
 	if seep!=None:
@@ -123,8 +130,13 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 			cmap_name = 'RdBu_r'
 			square_tiles_args = {}
 			if wspace!=None: square_tiles_args.update(wspace=wspace)
-			axes,fig = square_tiles(len(viewnames),figsize,hspace=0.4,
-				favor_rows=horizontal,**square_tiles_args)
+			if panelplot_layout:
+				axes,fig = panelplot(panelplot_layout,figsize=figsize)
+				#! flatten a heterogeneous list if you have a complicated layout
+				if isinstance(axes[0],list): axes = [i for j in axes for i in j]
+			else:
+				axes,fig = square_tiles(len(viewnames),figsize,hspace=0.4,
+					favor_rows=horizontal,**square_tiles_args)
 			#---several plots use the same data
 			vecs = postdat[sn]['vecs']
 			#! need this to be a mean because the vecs are changing now ...!!! CHECK THIS
@@ -138,11 +150,30 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 			#---PLOT the mean curvature field
 			if 'average_field' in viewnames:
 				ax = axes[viewnames.index('average_field')]
-				im = ax.imshow(datas[tag][sn]['cf'].T,origin='lower',interpolation='nearest',vmax=cmax,vmin=-1*cmax,cmap=mpl.cm.__dict__[cmap_name],extent=[0,vecs[0],0,vecs[1]])
+				if max_curvature_overall:
+					cmax = np.abs(max_curvature_overall)
+					cmin = cmax*-1
+				im = ax.imshow(datas[tag][sn]['cf'].T,origin='lower',interpolation='nearest',
+					vmax=cmax,vmin=-1*cmax,cmap=mpl.cm.__dict__[cmap_name],extent=[0,vecs[0],0,vecs[1]])
 				mean_trial = datas[tag][sn]['drop_gaussians_points'].transpose(1,0,2).mean(axis=0)
+				#! override the mean and choose an average
+				if use_instantaneous_grid_on_average:
+					mean_trial = datas[tag][sn]['drop_gaussians_points'].transpose(1,0,2)[0]
 				ax.scatter(*mean_trial.T,s=1,c='k')
 				ax.set_title('average field')
-				add_colorbar(ax,im,title=r'$\mathrm{\langle C_0(x,y) \rangle}$')
+				kwargs_curvature_map = {}
+				if custom_cbar:
+					cb = add_colorbar(ax,im,title=custom_cbar['title'],
+						shift_up=custom_cbar['shift_up'])
+					cb.set_ticks(custom_cbar['yticks'])
+					cb.set_ticklabels(custom_cbar['ytick_labels'])
+				else:
+					cb = add_colorbar(ax,im,title=r'$\mathrm{\langle C_0(x,y) \rangle}$')
+				ax.set_xlabel('x (nm)')
+				ax.set_ylabel('y (nm)')
+				# always hide ticks on this plot
+				ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=True)
+				ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
 			#---PLOT a single instance of the neighborhood (good for debugging)
 			if 'neighborhood_static' in viewnames:
 				ax = axes[viewnames.index('neighborhood_static')]
@@ -179,6 +210,9 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				ax.set_xlabel('x (nm)')
 				ax.set_ylabel('y (nm)')
 				add_colorbar(ax,im,title=r'$\mathrm{\langle z \rangle \, (nm)}$')
+				# always hide ticks on this plot
+				ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=True)
+				ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
 			#---PLOT an example curvature field ('first' is hard-coded, instead of saving each frame)
 			if 'example_field' in viewnames:
 				ax = axes[viewnames.index('example_field')]
@@ -231,15 +265,25 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				#---! high cutoff is hard-coded here but needs to be removed to the yaml
 				#---! ...we need to get the default
 				qs = datas[tag][sn]['qs']
-				band = qs<=hicut
+				#! band = qs<=hicut
+				#! correcting some inconsistent behavior on v5 the 100-neighborhood
+				band = np.where(qs>-1)[0]
 				ax.scatter(datas[tag][sn]['qs'][band],datas[tag][sn]['ratios'][band],s=10,c='k',alpha=1.0)
 				ax.axhline(1.0,c='k')
 				ax.set_xscale('log')
 				ax.set_yscale('log')
 				error = datas[tag][sn]['bundle'][sn]['fun']
-				ax.set_title('full spectrum')
+				#! ax.set_title('full spectrum')
+				ax.set_xlabel(r'$\mathrm{ | \vec{q}_{x,y} | }$')
+				ax.set_ylabel(r'$\mathrm{ \mathcal{H}\,(k_B T )}$')
 				ax.grid(True)
 				ax.axvline(hicut,ymin=0.0,ymax=1.0,c='k',lw=2)
+				#! ax.set_xlim((0.09,11))
+				#! using the method from zoom because v5 is not looking good on the spectra
+				#!   everything is squished to the left
+				#! print('minimum qs is %.3f'%(qs[qs>0].min()))
+				#! ax.set_xlim(qs[qs>0].min(),hicut)
+				ax.set_xlim((0.009,1.0))
 			#---PLOT spectrum, relevant section
 			if 'spectrum_zoom' in viewnames:
 				ax = axes[viewnames.index('spectrum_zoom')]
@@ -322,9 +366,10 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 				add_colorbar(ax,im,title=r'$\mathrm{\langle C_0 \rangle \,({nm}^{-1})$')
 				plothull_protein_center_average(ax,sn,vecs,tag)
 			#---no tick marks on anything
-			for ax in axes:
-				ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=False)
-				ax.tick_params(axis='y',which='both',left=False,right=False,labelbottom=False)
+			if tickoff:
+				for ax in axes:
+					ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=False)
+					ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=False)
 			#---the metadata for this plot comes from the design section
 			#! new data structures try: meta = calcs[tag][sn]['calcs']['specs']['specs']
 			#! note meta is bad right now because it includes the rest of the loop so if you change it
@@ -335,5 +380,6 @@ def individual_reviews_plotter(viewnames,out_fn,seep=None,figsize=(10,10),
 			#---add high cutoff (from fitting parameters if defined) to the meta
 			meta['high_cutoff'] = hicut
 			meta['design_tag'] = tag
+			print('saving picture with metadata: %s'%meta)
 			picturesave('fig.%s.%s'%(out_fn,sn),work.plotdir,backup=False,version=True,meta=meta)
 	return report 
