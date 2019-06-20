@@ -109,41 +109,53 @@ slices:
         nanogel_dat: NG_Position-0_Frame-0.dat
 
 meta:
-  SemiRigidE1: 
+  SemiRigidE1:
+    name: "Semi-rigid (25 nm, rep. 1)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
   SemiRigidE2: 
+    name: "Semi-rigid (25 nm, rep. 2)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
   SemiRigidE3: 
+    name: "Semi-rigid (25 nm, rep. 3)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
 
   RigidNCE1: 
+    name: "Rigid (rep. 1)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
   RigidNCE2: 
+    name: "Rigid (rep. 2)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
   RigidNCE3: 
+    name: "Rigid (rep. 2)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
 
   SemiRigidE1_50: 
+    name: "Rigid (rep. 1)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
   SemiRigidE2_50: 
+    name: "Rigid (rep. 2)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
   SemiRigidE3_50: 
+    name: "Rigid (rep. 3)"
     import_nanogel_alt: import_nanogel_positions_rigid
     frames_realign: True
 
   CL160ENS-1: 
-     frames_realign: True
+    name: "Nanogel (rep. 1)"
+    frames_realign: True
   CL160ENS-2: 
+    name: "Nanogel (rep. 2)"
     frames_realign: True
   CL160ENS-3: 
+    name: "Nanogel (rep. 3)"
     frames_realign: True
     
 # which calculations to perform (REQUIRED) via `make compute`
