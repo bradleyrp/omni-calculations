@@ -87,6 +87,7 @@ if __name__=='__main__':
 
 		sns = work.sns()
 		sn = sns[0]
+		sn = 'CL160ENS-1'
 		art = {'fs':{'legend':8}}
 		lims = (0.0,high_cutoff_undulation)
 		plotspecs = manyspectra
@@ -100,9 +101,9 @@ if __name__=='__main__':
 			label = 'structure: %s'%re.sub('_',' ',plotspec['midplane_method'])
 			label += '\n residuals: %s'%plotspec['residual_form']
 			label += '\n method: \n%s'%plotspec['fit_style']
-			label += '\n'+r'$\mathrm{\kappa='+('%.1f'%uspec['kappa'])+'\:k_BT}$'
+			label += '\n'+r'$\mathrm{\kappa='+('%.1f'%uspec['kappa'])+r'\:k_BT}$'
 			if uspec['sigma']!=0.0:
-				label += '\n'+r'$\mathrm{\sigma='+('%.3f'%uspec['sigma'])+'\:{k}_{B} T {nm}^{-2}}$'
+				label += '\n'+r'$\mathrm{\sigma='+('%.3f'%uspec['sigma'])+r'\:{k}_{B} T {nm}^{-2}}$'
 			colors = ['b','k','r']
 
 			q_binned,energy_binned = uspec['q_binned'],uspec['energy_binned']
@@ -159,7 +160,9 @@ if __name__=='__main__':
 	if 1:
 
 		# wavevector limits
+		#! previously to 1.0 in the main results. tried looking at 0.1
 		lims = (0.,1.0)
+		lims = (0.,0.1)
 
 		results = {}
 		# loop over all simulations
@@ -189,6 +192,10 @@ if __name__=='__main__':
 				surf = np.mean(mesh,axis=0)
 
 			if 0: surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
+			# modification after calculations for original manuscript
+			#   because the above was commented out, possibly during testing
+			surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
 				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
 
 			# kernel of this plot/calculation: calculate the spectra here

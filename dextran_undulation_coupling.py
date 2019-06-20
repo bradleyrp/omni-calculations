@@ -738,10 +738,10 @@ if __name__=='__main__':
 		lims = (0.0,high_cutoff_undulation)
 		plotspec = {
 			'fit_style':['band,perfect,curvefit','band,perfect,fit'][0],
-			'midplane_method':['flat','average','average_normal'][1],
-			'lims':[(0.0,high_cutoff_undulation),(0.04,high_cutoff_undulation)][1],
+			'midplane_method':['flat','average','average_normal'][0],
+			'lims':[(0.0,high_cutoff_undulation),(0.04,high_cutoff_undulation)][0],
 			'residual_form':['log','linear'][0],
-			'fit_tension':[False,True][0]}
+			'fit_tension':[False,True][1]}
 		uspecs = dict([(sn,calculate_undulations_wrapper(sn=sn,**plotspec))
 			for sn in sns_this])
 		# get the true fitted kappa and sigma from each method
