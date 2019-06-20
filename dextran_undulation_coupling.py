@@ -22,9 +22,17 @@ from omni.base.tools import gopher
 from ortho import delve,treeview
 import copy
 import pandas as pd
+import seaborn as sb
 import numpy as np
 from ortho import status
-
+import matplotlib as mpl
+import re
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from omni.plotter.panels import square_tiles
+from omni.base.store import picturesave
+import scipy
 
 # no plots by default
 control.routine = []
@@ -53,7 +61,14 @@ plotspec = {
 	'coupling_review.simple_centered':{
 		'viewnames':['average_height_center','curvature_field_center',
 		'coupling_review.simple'],
-		'figsize':(8,8),'horizontal':True,'wspace':0.7},}
+		'figsize':(8,8),'horizontal':True,'wspace':0.7},
+	'coupling_review.three':{
+		'viewnames':['average_height','average_field','spectrum'],
+		'panelplot_layout':{'out':{'grid':[1,1]},'ins':[
+			{'grid':[3,1],'hratios':[1,1,0.5]}]},'tickoff':False,
+		#! 'panelplot_layout':{'out':{'grid':[2,1],
+		#!   'hratios':[1,0.5]},'ins':[{'grid':[1,2]},{'grid':[1,1]}]},
+		'figsize':(3,10),'horizontal':True,'wspace':0.7},}
 
 @loader
 def load():
@@ -82,15 +97,40 @@ def load():
 			for k in ['design','fitting']])
 		contents_full[tag] = spec
 
+def color_vary(colors,n,p=0.2):
+	"""
+	Given a list of colors
+	"""
+	colors_out = []
+	for cnum,color in enumerate(colors):
+		left,center,right = [np.array(mpl.colors.to_rgb(i)) for i in ['w',color,'k']]
+		gaps = [np.linalg.norm(i-center) for i in [left,right]]
+		# discretize the progress along two lines
+		subdiv = np.linspace(1-p*1.,1+p*1.,n)
+		colors_sub = []
+		for ii,i in enumerate(subdiv):
+			if i<=1: x = left+i*(center-left)
+			else: x = center+(i-1.0)*(right-center)
+			#! scaling by gaps was wrong here!
+			if any([i<0 or i>1 for i in x]):
+				raise Exception('error')
+			colors_sub.append(x)
+		colors_out.append(colors_sub)
+	# reorder for pandas
+	color_list = [colors_out[j][i] for i in range(n) for j in range(len(colors))]
+	return color_list
+
 def plot_results(tag,plotspec):
 	"""
 	Plot a few versions of the main figure.
 	"""
+	report = {}
 	global data,upstreams,tags
 	plotspec = copy.deepcopy(plotspec)
 	# turn some off when developing
 	for i in [
-		'coupling_review.center_debug','coupling_review.simple_centered'
+		'coupling_review.center_debug','coupling_review.simple_centered',
+		'coupling_review.simple',
 		]: plotspec.pop(i)
 	# lookups require tags in the same order as upstreams
 	data_ucc.set('curvature_undulation_coupling_dex',
@@ -123,18 +163,40 @@ def plot_results(tag,plotspec):
 		undulations_name=plotspecs['undulations_name'],
 		protein_abstractor_name=plotspecs['protein_abstractor_name'])
 	for out_fn,details in plotspec.items(): 
+		yticks = np.arange(-0.08,0.08+0.02,0.02).round(10)
 		report_this = individual_reviews_plotter(
+			#! bootstrap the following maximum from the report if the data change
+			#! true maximum curvature for v5 is: max([report[(sn,'v5')]['max_curvature'] for sn in data.this]
+			#!   which is 0.08865340495632093 or 0.09
+			#! custom color bar limits
+			custom_cbar=dict(
+				title=r'$\mathrm{\langle C_0(x,y) \rangle}$'+'\n'+r'$\mathrm{({nm}^{-1}\times{10}^2})$',
+				yticks=yticks,ytick_labels=['%d'%(i*10**2) for i in yticks],
+				shift_up=1.2),
+			max_curvature_overall=0.09,
+			use_instantaneous_grid_on_average=True,
 			out_fn=out_fn,seep=seep,**details)
 		if out_fn=='coupling_review': report = report_this
 	# save the report
 	return report
 
 @autoplot
-def plot_recap(report):
+def plot_recap(report,subset=False,bw=False,which='error_curvature'):
 	"""
 	Bar plots of curvature and error across hypotheses.
 	"""
-	import re
+	if which=='error_curvature':
+		items = ['max_curvature','error']
+		figsize = 8
+		fn_base = 'summary'
+		legend_args = dict(loc='upper left',
+			bbox_to_anchor=(1.0,0.0,1.,1.))
+	elif which=='strength':
+		items = ['strength']
+		figsize = 6
+		fn_base = 'summary_strength'
+		legend_args = dict(loc='upper right')
+	else: raise Exception('inclear plot target: %s'%which)
 	#! many hardcoded features of this plot
 	for key,val in report.items(): 
 		report[key]['style'] = re.match(
@@ -146,50 +208,205 @@ def plot_recap(report):
 		elif re.match(r'^SemiRigid',key[0]):
 			report[key]['radius'] = 25
 		else: report[key]['radius'] = -1
-	groups = [
-		('SemiRigidE1','SemiRigidE2','SemiRigidE3'),
-		('RigidNCE1','RigidNCE2','RigidNCE2',),
-		('SemiRigidE1_50','SemiRigidE2_50','SemiRigidE3_50'),
-		('CL160ENS-1','CL160ENS-2','CL160ENS-3',),]
-	maxes = {'max_curvature':0.15,'error':0.014}
+	if not subset:
+		groups = [
+			('SemiRigidE1','SemiRigidE2','SemiRigidE3'),
+			('RigidNCE1','RigidNCE2','RigidNCE3',),
+			('SemiRigidE1_50','SemiRigidE2_50','SemiRigidE3_50'),
+			('CL160ENS-1','CL160ENS-2','CL160ENS-3',),]
+		groups_names = ['Semi-Rigid','Rigid','Semi-Rigid 50','Nanogel']
+		tick_label_list = ['SemiRigid','Rigid','Semi-\nRigid (50)','Dextran']
+		groups_names = ['Rigid-Tethered','Rigid','Rigid_Tethered 50','Flexible']
+		tick_label_list = ['Rigid-Tethered','Rigid','Rigid-\nTethered (50)','Flexible']
+	else:
+		groups = [
+			('RigidNCE1','RigidNCE2','RigidNCE3',),
+			('SemiRigidE1_50','SemiRigidE2_50','SemiRigidE3_50'),
+			('CL160ENS-1','CL160ENS-2','CL160ENS-3',),]
+		tick_label_list = ['Rigid','Semi-\nRigid','Dextran']
+		groups_names = ['Rigid','Semi-Rigid','Nanogel']
+		tick_label_list = ['Rigid','Rigid-\nTethered','Flexible']
+		groups_names = ['Rigid','Rigid-Tethered','Flexible']
+	#! before the latest round of dextran calculations, now being plotted on
+	#!   2019.06.03, the maximum error was beneath 0.014 so the recent
+	#!   calculations from roughly last week might have high error for some 
+	#!   unknown reason that needs investigated. 
+	#! once I recovered the old data I set if rom 0.09 back to 0.014
+	#! max strength for the subset is 
+	#!   np.array([[report[(i,'v5')]['strength'] for i in g] for g in groups]).max()
+	maxes = {'max_curvature':0.15,'error':0.014,'strength':0.0009}
 	titles = {'v3':'neighborhood\n(50,40x20)',
 		'v5':'neighborhood\n(100,40x20)','v4':'pixel\n(80x40)'}
-	import pandas as pd
-	import matplotlib as mpl
-	import matplotlib.pyplot as plt
-	from omni.plotter.panels import square_tiles
-	from omni.base.store import picturesave
 	counter = 0
-	#! axes,fig = square_tiles(4,(10,10),)
-	tags = ['v3','v5','v4']
-	fig,axes = plt.subplots(nrows=2,ncols=3,figsize=(12,12))
-	color_list = ['krb','krb','krb']
+	if not subset:
+		tags = ['v3','v5','v4']
+		fig,axes = plt.subplots(nrows=len(items),ncols=len(tags),figsize=(12,12))
+		extra_tag = ''
+	else:
+		#! limiting tags here now that we have settled on one
+		tags = ['v5']
+		axes,fig = square_tiles(len(items),figsize=figsize,
+			favor_rows=True,wspace=0.4,hspace=0.1)
+		axes = [[axes[i]] for i in range(len(items))]
+		extra_tag = '.spec_v5'
+
 	# seaborn for better colors
 	import seaborn as sb
 	pal = sb.color_palette()
-	color_list = [pal[:len(groups)] for i in range(len(titles))]
-	for inum,item in enumerate(['max_curvature','error']):
+	if subset: colors = ['#e41a1c','#377eb8','#4daf4a']
+	else: colors = 'rgbm'
+	color_list = color_vary(colors=colors,n=3,p=0.2)
+	for inum,item in enumerate(items):
 		for tnum,tag in enumerate(tags):
 			ax = axes[inum][tnum]
 			result = {}
-			for key in ['error','style','radius','max_curvature']:
+			for key in ['error','style','radius','max_curvature','strength']:
 				result[key] = [[report[(i,tag)][key] 
 					for i in g] for g in groups]
+				#! notes on "replicate-grouped bars": flatten it
+				#! result[key] = [report[(g,tag)][key] for group in groups for g in group]
 			df = pd.DataFrame(result[item])
-			ax.set_title('%s %s'%(item,titles[tag]))
+			#! alternate formulation: prepare the right tags
+			sn_to_group = [(g,report[(g,tag)]['style']) for group in groups for g in group]
+			index = [i[1] for i in sn_to_group]
+			#! df = pd.DataFrame(result[item],index=index)
+			if 0: df = pd.DataFrame(zip(index,result[item]),columns=['index','error'])
+			#! ax.set_title('%s %s'%(item,titles[tag]))
+			if item=='error':
+				ax.set_ylabel('error')
+			elif item=='max_curvature':
+				ax.set_ylabel(r'$\mathrm{C_{0,max}}\,({nm}^{-1})$')
+			elif item=='strength':
+				ax.set_ylabel(r'$\mathrm{\frac{\int{}{} C_0 dA}{\int{}{} dA}\,({nm}^{-2})}$')
+			#! notes on "replicate-grouped bars": try using groupby
 			#! df.groupby('styles').errors.value_counts().plot.bar()
 			#! counter intuitiuve color ordering
-			plot = df.plot.bar(color=color_list,ax=ax)
+			#! df = df.unstack()
+			plot = df.plot.bar(ax=ax,edgecolor='black',stacked=False)
+			#! notes on "replicate-grouped bars": we have to set the bars manually
+			#!   because pandas expects each member of a group to be the same color
+			bars = [this for this in plot.get_children()
+				if this.__class__.__name__=='Rectangle' and this._width<1]
+			if len(color_list)<len(bars):
+				raise Exception('we have %d bars and only %d colors'%(len(bars),len(color_list)))
+			for bnum,bar in enumerate(bars):
+				bar.set_facecolor(color_list[bnum])
 			ax.get_legend().remove()
-			ax.set_xticklabels(['SemiRigid','Rigid',
-				'Semi-\nRigid (50)','Dextran'],rotation=0)
+			ax.set_xticklabels(tick_label_list,rotation=0)
 			ax.set_ylim((0,maxes[item]))
-	picturesave('fig.summary',work.plotdir,backup=False,version=True,meta={})
+			if item in ['error','strength']:
+				plt.ticklabel_format(style='sci',axis='y',scilimits=(0,3))
+			ax.tick_params(axis='x',which='both',bottom=False)
+
+	#! https://stackoverflow.com/questions/31908982
+	import matplotlib.patches as mpatches
+	from matplotlib.patches import Rectangle
+	from matplotlib.legend_handler import HandlerBase
+	class HandlerColormap(HandlerBase):
+		def __init__(self, custom_colors, **kw):
+			HandlerBase.__init__(self, **kw)
+			self.custom_colors = custom_colors
+			self.num_stripes = len(custom_colors)
+		def create_artists(self, legend, orig_handle, 
+			xdescent, ydescent, width, height, fontsize, trans):
+			stripes = []
+			for i in range(len(self.custom_colors)):
+				s = Rectangle([xdescent + i * width / self.num_stripes, ydescent], 
+					width / self.num_stripes, 
+					height, 
+					#! fc=self.cmap((2 * i + 1) / (2 * self.num_stripes)), 
+					fc = self.custom_colors[i], 
+					transform=trans)
+				stripes.append(s)
+			return stripes
+	
+	# custom legend for replicates by group
+	labels_legend = [i for j in list(zip(*groups)) for i in j]
+	n_reps = int(len(labels_legend)/len(colors))
+	labels = ['%s'%i for i in groups_names]
+	reorder = [j*n_reps+i for i in range(n_reps) 
+		for j in range(len(colors))]
+	color_list = [color_list[i] for i in reorder]
+	# create proxy artists as handles:
+	cmap_handles = [Rectangle((0, 0), 1, 1) for _ in labels]
+	handler_map = dict(zip(cmap_handles,
+		[HandlerColormap(custom_colors=color_list[ii*n_reps:(ii+1)*n_reps]) for ii,i in enumerate(labels)]))
+	legend_args
+	legend = ax.legend(handles=cmap_handles, 
+		labels=labels, 
+		handler_map=handler_map,
+		**legend_args)
+	frame = legend.get_frame()
+	legend.set_title('replicates')
+	frame.set_edgecolor('white')
+	frame.set_facecolor('white')
+
+	#! original legend
+	if 0:
+		# last plot gets a legend
+		# note that the bars are ordered by item in the group, then by group so we have to re-reorder
+		labels_legend = [i for j in list(zip(*groups)) for i in j]
+		labels_legend = [work.metadata.meta[sn].get('name',sn) for sn in labels_legend]
+		patches = [mpl.patches.Rectangle((0,0),1.0,1.0,fc=color_list[cnum]) 
+			for cnum,__name__ in enumerate(labels_legend)]
+		#! assume equal replicates in each group
+		n_reps = int(len(labels_legend)/len(colors))
+		reorder = [j*n_reps+i for i in range(n_reps) 
+			for j in range(len(colors))]
+		patches = [patches[i] for i in reorder]
+		labels_legend = [labels_legend[i] for i in reorder]
+		legend = ax.legend(patches,labels_legend,loc='upper left',
+			bbox_to_anchor=(1.0,0.0,1.,1.))
+		frame = legend.get_frame()
+		frame.set_edgecolor('white')
+		frame.set_facecolor('white')
+	picturesave('fig.%s%s'%(fn_base,extra_tag),work.plotdir,
+		backup=False,version=True,meta={},extras=[legend])
+
+def compute_strengths():
+	"""
+	Must follow the creation of the report.
+	"""
+	import scipy.integrate
+	import scipy.interpolate
+	def integral2d(z,lx,ly,spacer):
+		xx,yy = np.meshgrid(np.arange(0,lx,spacer),np.arange(0,ly,spacer))
+		fi = scipy.interpolate.interp2d(xx,yy,z,kind='cubic')
+		sample_recap = np.array([fi(x,y) for ii,(x,y) 
+			in enumerate(zip(xx.reshape(-1),yy.reshape(-1)))]).reshape(xx.shape)
+		return scipy.integrate.dblquad(fi,0,lx,lambda x:0,lambda x: ly)
+	global report
+	for tag in tags:
+		for sn in data.this:
+			data_ucc.set('curvature_undulation_coupling_dex',
+				select=upstreams[tags.index(tag)]['specs'])
+			dat = data_ucc.this[sn]['cf_first']
+			lx,ly = data.this[sn]['vecs'].mean(axis=0)[:2]
+			spacing = data.this[sn]['grid_spacing']
+			dA = spacing**2
+			# numerical integration with simpson's rule
+			#! to improve the resultion you would have to do some interpolation here
+			denom = scipy.integrate.simps(scipy.integrate.simps(
+				np.ones([i+1 for i in dat.shape])*np.sqrt(dA)))
+			# the denominator above should be area, or lx*ly
+			ans_numerator = scipy.integrate.simps(scipy.integrate.simps(dat**2*dA))
+			#! interpolation is unreliable and does not improve much on Simpson
+			if 0:
+				print('status interpolating %s (slow)'%sn)
+				ans_alt = integral2d(dat**2,lx,ly,spacing)
+				"""
+				the interpolation method gives very similar answers
+				ans_numerator is 26.646672781514038
+				ans_alt is 27.066673349948672
+				difference is 1.5%
+				"""
+				ans_numerator = ans_alt[0]
+			report[(sn,tag)]['strength'] = ans_numerator/denom
 
 @function
 def make_images_and_report():
 	"""Make all images and summary bar plot."""
-	global plotspec
+	global plotspec,report
 	report = {}
 	for tag in tags:
 		# save features of each hypothesis set while images are rendered
@@ -197,8 +414,12 @@ def make_images_and_report():
 		for sn,tag in result:
 			report.update(result)
 	# plot a summary bar plot from the features we saved during plots
-	plot_recap(report=report)
-	return report
+	try: 
+		plot_recap(report=report)
+		status("maximum error is %.3f"%max([i['error'] for i in report.values()]))
+		return report
+	#! protect against failure during development
+	except: pass	
 
 def package_ucc(dat,sns):
 	"""
@@ -317,6 +538,7 @@ if __name__=='__main__':
 			BE CAREFUL THAT YOU ARE ONLY COMPARING THE SAME midplane_method!
 			"""
 			# wavevector limits
+			#! note that this is ignored because we get the results from the ucc
 			lims = (0.,1.0)
 			# select a midplane method
 			midplane_method = [
@@ -394,6 +616,11 @@ if __name__=='__main__':
 			freq2, oper2 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
 			nqs = len(qs)
 			for j in range(0,nqs):
+				if qs[j] < 0.184:
+					qs[j] = qs[j]
+				else: qs[j] = 0.0
+
+			for j in range(0,nqs):
 				if qs[j] > 0.0:
 					freq1[j] = np.sqrt(area_mem*(
 							kappa*kB*temp*qs[j]**4*10**36+
@@ -423,4 +650,165 @@ if __name__=='__main__':
 				Entropy_2=Entropy_2,
 			)
 
-		### NOTE! Ryan is checking to see why the zeroth mode is not zero in dextran_undulation.py!
+	# PLOTS AND SUMMARY PLOT
+	do_full_plots = True
+	if 'report' not in globals() and do_full_plots:
+		make_images_and_report()
+		compute_strengths()
+	if do_full_plots:
+		plot_recap(report,subset=True)
+		plot_recap(report)
+		plot_recap(report,subset=True,which='strength')
+
+	#!!! debugging the qs which differ across design specs
+	if False:
+		tag = 'v4'
+		data_ucc.set('curvature_undulation_coupling_dex',select=upstreams[tags.index(tag)]['specs'])
+		qs = data_ucc.this[sn]['qs'] # max is 0.18 for a v5 but 0.44 for other simulations
+		qs[qs>0].min()
+
+	#! developing a combined undulation spectrum plot
+	if 1:
+
+		def calculate_undulations_wrapper(sn,**kwargs):
+			"""
+			Fit the undulations for both the undulations survey and the entropy calculation.
+			"""
+			global data,calculate_undulations,data_average_normal
+			fit_style = kwargs.pop('fit_style')
+			residual_form = kwargs.pop('residual_form')
+			midplane_method = kwargs.pop('midplane_method')
+			fit_tension = kwargs.pop('fit_tension')
+			lims = kwargs.pop('lims')
+			if kwargs: raise Exception('unprocessed kwargs %s'%kwargs)
+			if midplane_method=='average_normal': 
+				data.set('undulations_average_normal')
+				data_average_normal = data.this
+				#! custom_heights = data_average_normal[sn]['data']['average_normal_heights']
+				custom_heights = data_average_normal[sn]['average_normal_heights']
+			else: custom_heights = None
+			#! updating for datapacK dat = data[sn]['data']
+			data.set('import_readymade_meso_v1_membrane')
+			dat = data.this[sn]
+			mesh = dat['mesh']
+			vecs = dat['vecs']
+			surf = np.mean(dat['mesh'],axis=0)
+			#! when prepping the data structure you cannot forget to remove the zero mode!
+			#!   this was an oversight until we noticed a nonzero zeroth mode
+			#! the following gives axes don't match array:
+			#!   surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+			#!   (surf.shape[0],surf.shape[1])).transpose((2,0,1))
+			surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
+			uspec = calculate_undulations(surf,vecs,
+				fit_style=fit_style,custom_heights=custom_heights,lims=lims,
+				midplane_method=midplane_method,residual_form=residual_form,fit_tension=fit_tension)
+			return uspec
+
+		"""
+		Composite undulation plot.
+		Under development for the manuscript. Show the height undulations 
+		with various fits, even if they include curvature.
+		"""
+		subset = True
+		#! order must match the colors
+		sns_this = ['RigidNCE1', 'RigidNCE2', 'RigidNCE3', 
+			'SemiRigidE1_50', 'SemiRigidE2_50', 'SemiRigidE3_50', 
+			'CL160ENS-1', 'CL160ENS-2', 'CL160ENS-3']
+		sns_this = ['CL160ENS-1', 'CL160ENS-2', 'CL160ENS-3']
+		groups = [
+			('RigidNCE1','RigidNCE2','RigidNCE3',),
+			('SemiRigidE1_50','SemiRigidE2_50','SemiRigidE3_50'),
+			('CL160ENS-1','CL160ENS-2','CL160ENS-3',),]
+		group_to_super = {}
+		for s,group in zip(['rigid','semi','flex'],groups):
+			for g in group: group_to_super[g] = s
+		colors = ['#e41a1c','#377eb8','#4daf4a']
+		color_list = color_vary(colors=colors,n=3,p=0.2)
+		super_colors = {'rigid':'r','semi':''}
+		from ortho import sweeper,status
+		from omni.plotter.panels import square_tiles
+		high_cutoff_undulation = 0.1
+		from calcs.codes.undulate_plot import add_undulation_labels,add_axgrid,add_std_legend
+		def hqhq(q_raw,kappa,sigma,area,exponent=4.0):
+			return 1.0/(area/2.0*(kappa*q_raw**(exponent)+sigma*q_raw**2))
+		sns = work.sns()
+		sn = sns[0]
+		art = {'fs':{'legend':8}}
+		lims = (0.0,high_cutoff_undulation)
+		plotspec = {
+			'fit_style':['band,perfect,curvefit','band,perfect,fit'][0],
+			'midplane_method':['flat','average','average_normal'][1],
+			'lims':[(0.0,high_cutoff_undulation),(0.04,high_cutoff_undulation)][1],
+			'residual_form':['log','linear'][0],
+			'fit_tension':[False,True][0]}
+		uspecs = dict([(sn,calculate_undulations_wrapper(sn=sn,**plotspec))
+			for sn in sns_this])
+		# get the true fitted kappa and sigma from each method
+		if 0:
+			for sn in sns_this:
+				uspecs[sn]['kappa'] = results[sn]['kappa']*2 #! WHY?
+				#! factor of two!!!
+				#! [uspecs[sn]['kappa'] for sn in sns_this]
+				uspecs[sn]['gamma'] = uspecs[sn]['sigma'] = results[sn]['sigma']
+				uspecs[sn]['area'] = uspecs[sn]['area']
+				#! uspecs[sn]['crossover'] = 0.03
+
+		axes,fig = square_tiles(1,figsize=12,favor_rows=True,wspace=0.4,hspace=0.1)
+		ax = axes[0]
+		colors = ['b','k','r']
+		for snum,(sn,uspec) in enumerate(uspecs.items()):
+			q_binned,energy_binned = uspec['q_binned'],uspec['energy_binned']
+			ax.plot(q_binned,energy_binned,
+				'.',lw=0,markersize=10,markeredgewidth=0,alpha=0.2,
+				c=color_list[snum],label=None,zorder=3)
+			q_fit,energy_fit = np.transpose(uspec['points'])
+			ax.plot(q_fit,energy_fit,
+				# '.',lw=0,markersize=4,markeredgewidth=0,alpha=1.,zorder=4,
+				'.',lw=0,markersize=10,markeredgewidth=0,
+				c=color_list[snum],label=None,zorder=3)
+			if 'linear_fit_in_log' in uspec:
+				exponent = uspec['linear_fit_in_log']['c0']
+				status('alternate exponent %.3f'%exponent,tag='note')
+				ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],
+					exponent=-1.0*exponent,area=uspec['area']),lw=3,zorder=5,c='g')
+			elif 'crossover' in uspec:
+				ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=0.0,
+					area=uspec['area']),lw=3,zorder=1,c=color_list[snum])
+				# find the first value above the crossover and shift the tension down
+				#! the following is not working properly
+				ind = np.where(q_fit>uspec['crossover'])[0][0]
+				fac = abs((hqhq(q_fit,kappa=0,sigma=uspec['sigma'],
+					area=uspec['area'])/hqhq(q_fit,kappa=uspec['kappa'],
+					sigma=0,area=uspec['area']))[ind])
+				ax.plot(q_fit,fac*hqhq(q_fit,kappa=0,sigma=uspec['sigma'],
+					area=uspec['area']),lw=3,zorder=1,c=color_list[snum])
+				ax.axvline(uspec['crossover'],c='k',lw=1.0)
+			else:
+				# standard exponent plotting method
+				ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],
+					area=uspec['area']),lw=1,zorder=5,c=color_list[snum])
+				from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+				axins = inset_axes(ax,width="30%",height="30%",loc=3)
+				diffs = (energy_fit-
+					hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],area=uspec['area']))
+				axins.set_title('residuals',fontsize=6)
+				if plotspec['residual_form']=='log': 
+					axins.plot(10**diffs,'.-',lw=0.5,ms=1,color='k')
+					axins.set_xscale('log')
+					axins.set_yscale('log')
+					axins.axhline(1.0,c='k',lw=0.5,alpha=0.5)
+				else: 
+					axins.axhline(0.0,c='k',lw=0.5,alpha=0.5)
+					axins.plot(diffs,'.-',lw=0.5,ms=1,color='k')
+				axins.set_xticks([])
+				axins.set_yticks([])
+				axins.set_xticklabels([])
+				axins.set_yticklabels([])
+				axins.tick_params(axis='y',which='both',left='off',right='off',labelleft='on')
+				axins.tick_params(axis='x',which='both',top='off',bottom='off',labelbottom='on')
+			add_undulation_labels(ax,art=art)
+			add_std_legend(ax,loc='upper right',art=art)
+			add_axgrid(ax,art=art)
+		ax.set_ylim((10**-3,10**1))
+		picturesave('fig.undulation_survey.DEV',work.plotdir,backup=False,version=True,meta={})

@@ -24,7 +24,7 @@ def load():
 if __name__=='__main__':
 
 	# BLOCK 0: RYAN IS WORKING ON THIS. THIS CODE MAKES ALL THE PANELS
-	if 0:
+	if 1:
 
 		def calculate_undulations_wrapper(sn,**kwargs):
 			"""
@@ -53,8 +53,11 @@ if __name__=='__main__':
 
 			#! when prepping the data structure you cannot forget to remove the zero mode!
 			#!   this was an oversight until we noticed a nonzero zeroth mode
+			#! the following gives axes don't match array:
+			#!   surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+			#!   (surf.shape[0],surf.shape[1])).transpose((2,0,1))
 			surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
-				(surf.shape[0],surf.shape[1])).transpose((2,0,1))
+				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
 
 			uspec = calculate_undulations(surf,vecs,
 				fit_style=fit_style,custom_heights=custom_heights,lims=lims,
@@ -233,6 +236,11 @@ if __name__=='__main__':
 			freq1, oper1 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
 			freq2, oper2 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
 			nqs = len(qs)
+			for j in range(0,nqs):
+				if qs[j] < 0.184:
+				   qs[j] = qs[j]
+				else: qs[j] = 0.0
+
 			for j in range(0,nqs):
 				if qs[j] > 0.0:
 					freq1[j] = np.sqrt(area_mem*(kappa*kB*temp*qs[j]**4*10**36+sigma*kB*temp*qs[j]**2*10**36)/mass)
