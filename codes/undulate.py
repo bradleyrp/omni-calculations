@@ -129,7 +129,7 @@ def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 
 		if lims==None: raise Exception('fit_style %s requires lims'%fit_style)
 		#---collapse, perfectly
-		x2,y2 = perfect_collapser(x,x)[1],perfect_collapser(x,y)[1] 
+		x2,y2 = perfect_collapser(x,x)[1],perfect_collapser(x,y)[1]
 		goodslice = np.where(np.all((x2>lims[0],x2<lims[1]),axis=0))
 		#---sample in the band and drop the zero mode
 		#---! where is the zero mode dropped?
