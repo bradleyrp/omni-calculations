@@ -30,9 +30,33 @@ import re
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from omni.plotter.panels import square_tiles
+from omni.plotter.panels import square_tiles,panelplot
 from omni.base.store import picturesave
 import scipy
+import json
+
+#! https://stackoverflow.com/questions/31908982
+#! requirements for the fancy legend
+import matplotlib.patches as mpatches
+from matplotlib.patches import Rectangle,Circle
+from matplotlib.legend_handler import HandlerBase
+class HandlerColormap(HandlerBase):
+	def __init__(self, custom_colors, **kw):
+		HandlerBase.__init__(self, **kw)
+		self.custom_colors = custom_colors
+		self.num_stripes = len(custom_colors)
+	def create_artists(self, legend, orig_handle, 
+		xdescent, ydescent, width, height, fontsize, trans):
+		stripes = []
+		for i in range(len(self.custom_colors)):
+			s = Rectangle([xdescent + i * width / self.num_stripes, ydescent], 
+				width / self.num_stripes, 
+				height, 
+				#! fc=self.cmap((2 * i + 1) / (2 * self.num_stripes)), 
+				fc = self.custom_colors[i], 
+				transform=trans)
+			stripes.append(s)
+		return stripes
 
 # no plots by default
 control.routine = []
@@ -298,28 +322,6 @@ def plot_recap(report,subset=False,bw=False,which='error_curvature'):
 				plt.ticklabel_format(style='sci',axis='y',scilimits=(0,3))
 			ax.tick_params(axis='x',which='both',bottom=False)
 
-	#! https://stackoverflow.com/questions/31908982
-	import matplotlib.patches as mpatches
-	from matplotlib.patches import Rectangle
-	from matplotlib.legend_handler import HandlerBase
-	class HandlerColormap(HandlerBase):
-		def __init__(self, custom_colors, **kw):
-			HandlerBase.__init__(self, **kw)
-			self.custom_colors = custom_colors
-			self.num_stripes = len(custom_colors)
-		def create_artists(self, legend, orig_handle, 
-			xdescent, ydescent, width, height, fontsize, trans):
-			stripes = []
-			for i in range(len(self.custom_colors)):
-				s = Rectangle([xdescent + i * width / self.num_stripes, ydescent], 
-					width / self.num_stripes, 
-					height, 
-					#! fc=self.cmap((2 * i + 1) / (2 * self.num_stripes)), 
-					fc = self.custom_colors[i], 
-					transform=trans)
-				stripes.append(s)
-			return stripes
-	
 	# custom legend for replicates by group
 	labels_legend = [i for j in list(zip(*groups)) for i in j]
 	n_reps = int(len(labels_legend)/len(colors))
@@ -331,7 +333,7 @@ def plot_recap(report,subset=False,bw=False,which='error_curvature'):
 	cmap_handles = [Rectangle((0, 0), 1, 1) for _ in labels]
 	handler_map = dict(zip(cmap_handles,
 		[HandlerColormap(custom_colors=color_list[ii*n_reps:(ii+1)*n_reps]) for ii,i in enumerate(labels)]))
-	legend_args
+	legend_args = dict(loc='upper right')
 	legend = ax.legend(handles=cmap_handles, 
 		labels=labels, 
 		handler_map=handler_map,
@@ -444,6 +446,41 @@ def package_ucc(dat,sns):
 	# all results are keyed by simulation name
 	return dict(c0_avg=c0_avg,c0=c0,fits=fits,qs=qs,energy=energy)
 
+def calculate_undulations_wrapper(sn,**kwargs):
+	"""
+	Fit the undulations for both the undulations survey and the entropy calculation.
+	"""
+	global data,calculate_undulations,data_average_normal
+	fit_style = kwargs.pop('fit_style')
+	residual_form = kwargs.pop('residual_form')
+	midplane_method = kwargs.pop('midplane_method')
+	fit_tension = kwargs.pop('fit_tension')
+	lims = kwargs.pop('lims')
+	if kwargs: raise Exception('unprocessed kwargs %s'%kwargs)
+	if midplane_method=='average_normal': 
+		data.set('undulations_average_normal')
+		data_average_normal = data.this
+		#! custom_heights = data_average_normal[sn]['data']['average_normal_heights']
+		custom_heights = data_average_normal[sn]['average_normal_heights']
+	else: custom_heights = None
+	#! updating for datapacK dat = data[sn]['data']
+	data.set('import_readymade_meso_v1_membrane')
+	dat = data.this[sn]
+	mesh = dat['mesh']
+	vecs = dat['vecs']
+	surf = np.mean(dat['mesh'],axis=0)
+	#! when prepping the data structure you cannot forget to remove the zero mode!
+	#!   this was an oversight until we noticed a nonzero zeroth mode
+	#! the following gives axes don't match array:
+	#!   surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+	#!   (surf.shape[0],surf.shape[1])).transpose((2,0,1))
+	surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+		(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
+	uspec = calculate_undulations(surf,vecs,
+		fit_style=fit_style,custom_heights=custom_heights,lims=lims,
+		midplane_method=midplane_method,residual_form=residual_form,fit_tension=fit_tension)
+	return uspec
+
 def calculate_entropy(*args,**kwargs):
 	"""
 	Compute the entropy with wavevectors and corresponding energies.
@@ -486,240 +523,252 @@ if __name__=='__main__':
 	Run `make_images_and_report` to remake images and summary bar plots.
 	"""
 
-	# ENTROPY METHOD 1 (set True to try this)
-	if 1:
+	do_full_plots = False
+	do_meta_comparison = True
+	do_combined_undulation_plot = True
+	do_meta_comparison_bars = True
 
-		# review the hypotheses
-		treeview(dict(hypotheses=contents))
+	# ENTROPY METHOD 1 (set True/1 to try this)
+	if do_meta_comparison or 'meta_results' not in globals():
 
-		# select a hypothesis by tag from the hypotheses dict
-		tag_this = 'v5'
+		# wrapping the calculation of results in a loop over meta hypotheses
+		meta_results = {}
+		# enumerate the meta hypotheses
+		hypos = [
+			{'fit_style': 'band,perfect,curvefit', 
+				'midplane_method': 'average_normal', 'lims': (0.0, 0.1), 
+				'residual_form': 'log', 'fit_tension': True},
+			{'fit_style': 'band,perfect,curvefit', 
+				'midplane_method': 'average_normal', 'lims': (0.0, 1.0), 
+				'residual_form': 'log', 'fit_tension': True},
+			{'fit_style': 'band,perfect,curvefit', 
+				'midplane_method': 'flat', 'lims': (0.0, 1.0), 
+				'residual_form': 'log', 'fit_tension': True},
+			{'source':'package_ucc'}]
+		# once you select a hypothesis for publication, make the full
+		#   undulation plot below by choosing underneath where it says
+		#   "make the midplane method and limit choices here"
+		hypo_names = ['average normal','average normal 0-1','flat 0-1','UCC']
+		for hnum,hypo in enumerate(hypos):
 
-		# get the data from the undulation-curvature coupling object
-		data_ucc.set(select=contents_full[tag_this]['specs'])
-		dat = data_ucc.this
-		result = package_ucc(dat,sns)
+			# review the hypotheses
+			treeview(dict(hypotheses=contents))
 
-		# select a simulation
-		#! note that this uses the original entropy function above
-		#!   this was replaced with the entropy method below on 2019.05.12
-		#!   and that function was added to dextran_undulation.py on 2019.04.26
-		for sn in sns:
-			#! result is currently inf
-			entropy = calculate_entropy(
-				result['qs'][sn],
-				result['energy'][sn],
-				kappa=result['fits']['kappa'][sn],
-				sigma=result['fits']['gamma'][sn],)
+			# select a hypothesis by tag from the hypotheses dict
+			tag_this = 'v5'
 
-		# entropy calculation starts here
-		# this mimics the version in dextran_undulation.py from 2019.04.26
-		# that script gets uspec from a function called calculate_undulations
-		# we populate uspec here, from the curvature coupling data
-		#! note result is populated above while results are populated below, to
-		#!   match dextran_undulation.py
-		results = {}
-		for snum,sn in enumerate(sns):
-			status('calculating entropy for %s'%sn,i=snum,looplen=len(sns))
+			# get the data from the undulation-curvature coupling object
+			data_ucc.set(select=contents_full[tag_this]['specs'])
+			dat = data_ucc.this
+			result = package_ucc(dat,sns)
 
-			"""
-			Notes on implementation:
-			At this point we are getting the variable "result" from data_ucc.
-			The data_ucc contains the undulation coupling results which contain the fitted kappa and sigma. However, that method is fitting the energy (and not the hqhq). The following construction of uspec is designed to mimic the result of a calculate_undulation function used in the dextran_undulation.py code. It puts the data in the same exact structure used by the two entropy calculations below. After we build it, we are going to replace energy_raw, which is an energy value optimized to match kBT, with the hqs, because the entropy calculation needs the hqs and not the energy.
-			"""
-			uspec = dict(q_raw=result['qs'][sn],
-				energy_raw=result['energy'][sn],
-				kappa=result['fits']['kappa'][sn],
-				sigma=result['fits']['gamma'][sn])
+			# select a simulation
+			#! note that this uses the original entropy function above
+			#!   this was replaced with the entropy method below on 2019.05.12
+			#!   and that function was added to dextran_undulation.py on 2019.04.26
+			for sn in sns:
+				#! result is currently inf
+				entropy = calculate_entropy(
+					result['qs'][sn],
+					result['energy'][sn],
+					kappa=result['fits']['kappa'][sn],
+					sigma=result['fits']['gamma'][sn],)
 
-			### INTERVENTION
-			"""
-			this code was taken from dextran_undulation.py and provides the hqs directly
-			BE CAREFUL THAT YOU ARE ONLY COMPARING THE SAME midplane_method!
-			"""
-			# wavevector limits
-			#! note that this is ignored because we get the results from the ucc
-			lims = (0.,1.0)
-			# select a midplane method
-			midplane_method = [
-				'flat','average','average_normal',
-				][0]
+			# entropy calculation starts here
+			# this mimics the version in dextran_undulation.py from 2019.04.26
+			# that script gets uspec from a function called calculate_undulations
+			# we populate uspec here, from the curvature coupling data
+			#! note result is populated above while results are populated below, to
+			#!   match dextran_undulation.py
+			results = {}
+			for snum,sn in enumerate(sns):
+				status('calculating entropy for %s'%sn,i=snum,looplen=len(sns))
 
-			if midplane_method=='average_normal':
-				data.set('import_readymade_meso_v1_membrane')
-				dat = data.this[sn]
-				vecs = dat['vecs']
-				data.set('undulations_average_normal')
-				dat = data.this[sn]
-				surf = mesh = dat['average_normal_heights']
-				custom_heights = surf
-			else: 
-				data.set('import_readymade_meso_v1_membrane')
-				dat = data.this[sn]
-				mesh = dat['mesh']
-				custom_heights = None
-				vecs = dat['vecs']
-				# assume bilayer, even if one mesh, then take the average
-				surf = np.mean(mesh,axis=0)
+				"""
+				Notes on implementation:
+				At this point we are getting the variable "result" from data_ucc.
+				The data_ucc contains the undulation coupling results which contain the fitted kappa and sigma. However, that method is fitting the energy (and not the hqhq). The following construction of uspec is designed to mimic the result of a calculate_undulation function used in the dextran_undulation.py code. It puts the data in the same exact structure used by the two entropy calculations below. After we build it, we are going to replace energy_raw, which is an energy value optimized to match kBT, with the hqs, because the entropy calculation needs the hqs and not the energy.
+				"""
+				uspec = dict(q_raw=result['qs'][sn],
+					energy_raw=result['energy'][sn],
+					kappa=result['fits']['kappa'][sn],
+					sigma=result['fits']['gamma'][sn])
 
-			if 1: surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
-				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
+				### INTERVENTION
 
-			# kernel of this plot/calculation: calculate the spectra here
-			uspec_no_coupling = calculate_undulations(surf,vecs,chop_last=True,
-				custom_heights=custom_heights,
-				perfect=True,lims=lims,raw=False,midplane_method=midplane_method,
-				fit_style='band,perfect,curvefit',fit_tension=True)
-			# note that this value is called "energy_raw" but it is really hqs
-			#!!! correct this nomenclature error
-			wrong_method = False
-			if not wrong_method: uspec['energy_raw'] = uspec_no_coupling['energy_raw']
-			### END INTERVENTION
+				"""
+				this code was taken from dextran_undulation.py and provides the hqs directly
+				BE CAREFUL THAT YOU ARE ONLY COMPARING THE SAME midplane_method!
+				"""
 
-			kB = 1.38E-23
-			temp = 300.00
-			mass = 5.5E-22
-			area_mem = 0.25E-12 
-			Plank = 6.62607015*10**-34
+				# wavevector limits
+				#! note that this is ignored because we get the results from the ucc
+				lims = (0.,1.0)
+				# select a midplane method
+				midplane_method = [
+					'flat','average','average_normal',
+					][0]
 
-			# note that uspec includes the zeroth mode which we omit
-			#   this is necessary to match the method from 
-			#   dextran_undulation_coupling.py
-			kappa = uspec['kappa']
-			sigma = uspec['sigma']
-			qs = uspec['q_raw']
-			hqs = hq2 = uspec['energy_raw']
-			"""
-			# add back the zero mode:
-			The above is deprecated. You added the zero mode because the energy value coming from the coupling code had dropped the zero mode but we need the hqs anyway, not the energy, hence we skip this step.
-			"""
-			if wrong_method:
-				hqs = hq2 = np.concatenate(([0.],hqs))
-				qs = np.concatenate(([0.,],qs))
-				square_dim = np.sqrt(qs.shape)[0]
-				if square_dim.astype(int)!=square_dim:
-					raise Exception('dimension error! data might not be square '
-						'because we have %s items'%qs.shape)
-				else: square_dim = square_dim.astype(int)
-				nx,ny = (square_dim,square_dim)
-				hq2_square = np.reshape(hq2,(nx,ny))
+				# implement the hypotheses here
+				# the following flag specifies whether we are using the coupling results
+				#   that come from package_ucc or calculating the no-coupling data on the fly
+				hypo_ucc = hypo.get('source',False)=='package_ucc'
+				if not hypo_ucc:
+					lims = hypo['lims']
+					midplane_method = hypo['midplane_method']
 
-			#! an older code
-			if 0:
-				w_q1 = np.sqrt(area_mem*(kappa*qs**4+sigma*qs**2)/mass)
-				w_q2 = np.sqrt(kB*temp/(hq2**2*mass)) 
 
-			# CALCULATE ENTROPY
-			# code from 2019.04.26
+				if midplane_method=='average_normal':
+					data.set('import_readymade_meso_v1_membrane')
+					dat = data.this[sn]
+					vecs = dat['vecs']
+					data.set('undulations_average_normal')
+					dat = data.this[sn]
+					surf = mesh = dat['average_normal_heights']
+					custom_heights = surf
+				else: 
+					data.set('import_readymade_meso_v1_membrane')
+					dat = data.this[sn]
+					mesh = dat['mesh']
+					custom_heights = None
+					vecs = dat['vecs']
+					# assume bilayer, even if one mesh, then take the average
+					surf = np.mean(mesh,axis=0)
 
-			freq1, oper1 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
-			freq2, oper2 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
-			nqs = len(qs)
-			for j in range(0,nqs):
-				if qs[j] < 0.184:
-					qs[j] = qs[j]
-				else: qs[j] = 0.0
+				if 1: surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
+					(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
 
-			for j in range(0,nqs):
-				if qs[j] > 0.0:
-					freq1[j] = np.sqrt(area_mem*(
-							kappa*kB*temp*qs[j]**4*10**36+
-							sigma*kB*temp*qs[j]**2*10**36)/mass)
-					oper1[j] = freq1[j]*Plank/(kB*temp)/(2*np.pi)
-					freq2[j] = np.sqrt(kB*temp/(hqs[j]*10**-18*mass))
-					oper2[j] = freq2[j]*Plank/(kB*temp)/(2*np.pi)
+				# kernel of this plot/calculation: calculate the spectra here
+				uspec_no_coupling = calculate_undulations(surf,vecs,chop_last=True,
+					custom_heights=custom_heights,
+					perfect=True,lims=lims,raw=False,midplane_method=midplane_method,
+					fit_style='band,perfect,curvefit',fit_tension=True)
+				# note that this value is called "energy_raw" but it is really hqs
+				#!!! correct this nomenclature error
+				wrong_method = False
+				if not wrong_method: 
+					uspec['energy_raw'] = uspec_no_coupling['energy_raw']
 
-			Entropy_term_1 = 0.0
-			Entropy_term_2 = 0.0    
+				### END INTERVENTION
 
-			for j in range (0,nqs):
-				if qs[j] > 0.0:
-					Entropy_term_1 += (oper1[j]/(
-						np.exp(oper1[j])-1.0))-np.log(1.0-np.exp(-oper1[j]))
-					Entropy_term_2 += (oper2[j]/(
-						np.exp(oper2[j])-1.0))-np.log(1.0-np.exp(-oper2[j]))
+				"""
+				recall that the method above is called the "wrong" method because if you do not get the energy values
+				from the calculate_undulations code, then it comes from the uspec from the result from package_ucc which
+				means that the values are really energy values
+				adding the following line helps to ensure that the right undulation spectra values are contributing to the entropy
+				!!! beware that this might change the coupling results. audit the script to be sure
+				"""
+				if not hypo_ucc: 
+					uspec = uspec_no_coupling
 
-			Entropy_1 = Entropy_term_1*kB*6.022140857E23    # un j/K/mol
-			Entropy_2 = Entropy_term_2*kB*6.022140857E23    # un j/K/mol        
+				kB = 1.38E-23
+				temp = 300.00
+				mass = 5.5E-22
+				area_mem = 0.25E-12 
+				Plank = 6.62607015*10**-34
 
-			# save the results here
-			results[sn] = dict(
-				kappa=uspec['kappa'],
-				sigma=uspec['sigma'],
-				Entropy_1=Entropy_1,
-				Entropy_2=Entropy_2,
-			)
+				# note that uspec includes the zeroth mode which we omit
+				#   this is necessary to match the method from 
+				#   dextran_undulation_coupling.py
+				kappa = uspec['kappa']
+				sigma = uspec['sigma']
+				qs = uspec['q_raw']
+				hqs = hq2 = uspec['energy_raw']
+				"""
+				# add back the zero mode:
+				The above is deprecated. You added the zero mode because the energy value coming from the coupling code had dropped the zero mode but we need the hqs anyway, not the energy, hence we skip this step.
+				"""
+				if wrong_method:
+					hqs = hq2 = np.concatenate(([0.],hqs))
+					qs = np.concatenate(([0.,],qs))
+					square_dim = np.sqrt(qs.shape)[0]
+					if square_dim.astype(int)!=square_dim:
+						raise Exception('dimension error! data might not be square '
+							'because we have %s items'%qs.shape)
+					else: square_dim = square_dim.astype(int)
+					nx,ny = (square_dim,square_dim)
+					hq2_square = np.reshape(hq2,(nx,ny))
 
-	# PLOTS AND SUMMARY PLOT
-	do_full_plots = True
-	if 'report' not in globals() and do_full_plots:
+				#! an older code
+				if 0:
+					w_q1 = np.sqrt(area_mem*(kappa*qs**4+sigma*qs**2)/mass)
+					w_q2 = np.sqrt(kB*temp/(hq2**2*mass)) 
+
+				# CALCULATE ENTROPY
+				# code from 2019.04.26
+
+				freq1, oper1 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+				freq2, oper2 = np.zeros(qs.shape,'d'), np.zeros(qs.shape,'d')
+				nqs = len(qs)
+				for j in range(0,nqs):
+					if qs[j] < 0.184:
+						qs[j] = qs[j]
+					else: qs[j] = 0.0
+
+				for j in range(0,nqs):
+					if qs[j] > 0.0:
+						freq1[j] = np.sqrt(area_mem*(
+								kappa*kB*temp*qs[j]**4*10**36+
+								sigma*kB*temp*qs[j]**2*10**36)/mass)
+						oper1[j] = freq1[j]*Plank/(kB*temp)/(2*np.pi)
+						freq2[j] = np.sqrt(kB*temp/(hqs[j]*10**-18*mass))
+						oper2[j] = freq2[j]*Plank/(kB*temp)/(2*np.pi)
+
+				Entropy_term_1 = 0.0
+				Entropy_term_2 = 0.0    
+
+				for j in range (0,nqs):
+					if qs[j] > 0.0:
+						Entropy_term_1 += (oper1[j]/(
+							np.exp(oper1[j])-1.0))-np.log(1.0-np.exp(-oper1[j]))
+						Entropy_term_2 += (oper2[j]/(
+							np.exp(oper2[j])-1.0))-np.log(1.0-np.exp(-oper2[j]))
+
+				Entropy_1 = Entropy_term_1*kB*6.022140857E23    # un j/K/mol
+				Entropy_2 = Entropy_term_2*kB*6.022140857E23    # un j/K/mol        
+
+				# save the results here
+				results[sn] = dict(
+					kappa=uspec['kappa'],
+					sigma=uspec['sigma'],
+					Entropy_1=Entropy_1,
+					Entropy_2=Entropy_2,
+				)
+
+			# archive this set of results
+			meta_results[hnum] = copy.deepcopy(results)
+
+		# the following plots require 
+		results = meta_results[hypo_names.index('average normal')]
+
+	if 'report' not in globals() or do_full_plots:
 		make_images_and_report()
 		compute_strengths()
+
 	if do_full_plots:
 		plot_recap(report,subset=True)
 		plot_recap(report)
 		plot_recap(report,subset=True,which='strength')
 
-	#!!! debugging the qs which differ across design specs
-	if False:
-		tag = 'v4'
-		data_ucc.set('curvature_undulation_coupling_dex',select=upstreams[tags.index(tag)]['specs'])
-		qs = data_ucc.this[sn]['qs'] # max is 0.18 for a v5 but 0.44 for other simulations
-		qs[qs>0].min()
-
-	#! developing a combined undulation spectrum plot
-	if 1:
-
-		def calculate_undulations_wrapper(sn,**kwargs):
-			"""
-			Fit the undulations for both the undulations survey and the entropy calculation.
-			"""
-			global data,calculate_undulations,data_average_normal
-			fit_style = kwargs.pop('fit_style')
-			residual_form = kwargs.pop('residual_form')
-			midplane_method = kwargs.pop('midplane_method')
-			fit_tension = kwargs.pop('fit_tension')
-			lims = kwargs.pop('lims')
-			if kwargs: raise Exception('unprocessed kwargs %s'%kwargs)
-			if midplane_method=='average_normal': 
-				data.set('undulations_average_normal')
-				data_average_normal = data.this
-				#! custom_heights = data_average_normal[sn]['data']['average_normal_heights']
-				custom_heights = data_average_normal[sn]['average_normal_heights']
-			else: custom_heights = None
-			#! updating for datapacK dat = data[sn]['data']
-			data.set('import_readymade_meso_v1_membrane')
-			dat = data.this[sn]
-			mesh = dat['mesh']
-			vecs = dat['vecs']
-			surf = np.mean(dat['mesh'],axis=0)
-			#! when prepping the data structure you cannot forget to remove the zero mode!
-			#!   this was an oversight until we noticed a nonzero zeroth mode
-			#! the following gives axes don't match array:
-			#!   surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
-			#!   (surf.shape[0],surf.shape[1])).transpose((2,0,1))
-			surf -= np.tile(surf.reshape(len(surf),-1).mean(axis=1),
-				(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
-			uspec = calculate_undulations(surf,vecs,
-				fit_style=fit_style,custom_heights=custom_heights,lims=lims,
-				midplane_method=midplane_method,residual_form=residual_form,fit_tension=fit_tension)
-			return uspec
+	if do_combined_undulation_plot:
 
 		"""
 		Composite undulation plot.
 		Under development for the manuscript. Show the height undulations 
 		with various fits, even if they include curvature.
 		"""
+
 		subset = True
 		#! order must match the colors
 		sns_this = ['RigidNCE1', 'RigidNCE2', 'RigidNCE3', 
 			'SemiRigidE1_50', 'SemiRigidE2_50', 'SemiRigidE3_50', 
 			'CL160ENS-1', 'CL160ENS-2', 'CL160ENS-3']
-		sns_this = ['CL160ENS-1', 'CL160ENS-2', 'CL160ENS-3']
+		#! sns_this = ['CL160ENS-1', 'CL160ENS-2', 'CL160ENS-3']
 		groups = [
 			('RigidNCE1','RigidNCE2','RigidNCE3',),
 			('SemiRigidE1_50','SemiRigidE2_50','SemiRigidE3_50'),
 			('CL160ENS-1','CL160ENS-2','CL160ENS-3',),]
+		groups_names = ['Rigid','Rigid-Tethered','Flexible']
 		group_to_super = {}
 		for s,group in zip(['rigid','semi','flex'],groups):
 			for g in group: group_to_super[g] = s
@@ -728,7 +777,9 @@ if __name__=='__main__':
 		super_colors = {'rigid':'r','semi':''}
 		from ortho import sweeper,status
 		from omni.plotter.panels import square_tiles
-		high_cutoff_undulation = 0.1
+		# make the midplane method and limit choices here (see hypos above)
+		midplane_method = ['flat','average','average_normal'][1]
+		high_cutoff_undulation = 1.0
 		from calcs.codes.undulate_plot import add_undulation_labels,add_axgrid,add_std_legend
 		def hqhq(q_raw,kappa,sigma,area,exponent=4.0):
 			return 1.0/(area/2.0*(kappa*q_raw**(exponent)+sigma*q_raw**2))
@@ -738,77 +789,160 @@ if __name__=='__main__':
 		lims = (0.0,high_cutoff_undulation)
 		plotspec = {
 			'fit_style':['band,perfect,curvefit','band,perfect,fit'][0],
-			'midplane_method':['flat','average','average_normal'][0],
+			'midplane_method':midplane_method,
 			'lims':[(0.0,high_cutoff_undulation),(0.04,high_cutoff_undulation)][0],
 			'residual_form':['log','linear'][0],
 			'fit_tension':[False,True][1]}
 		uspecs = dict([(sn,calculate_undulations_wrapper(sn=sn,**plotspec))
 			for sn in sns_this])
-		# get the true fitted kappa and sigma from each method
-		if 0:
-			for sn in sns_this:
-				uspecs[sn]['kappa'] = results[sn]['kappa']*2 #! WHY?
-				#! factor of two!!!
-				#! [uspecs[sn]['kappa'] for sn in sns_this]
-				uspecs[sn]['gamma'] = uspecs[sn]['sigma'] = results[sn]['sigma']
-				uspecs[sn]['area'] = uspecs[sn]['area']
-				#! uspecs[sn]['crossover'] = 0.03
-
-		axes,fig = square_tiles(1,figsize=12,favor_rows=True,wspace=0.4,hspace=0.1)
+		axes,fig = square_tiles(1,figsize=8,favor_rows=True,wspace=0.4,hspace=0.1)
 		ax = axes[0]
-		colors = ['b','k','r']
-		for snum,(sn,uspec) in enumerate(uspecs.items()):
-			q_binned,energy_binned = uspec['q_binned'],uspec['energy_binned']
-			ax.plot(q_binned,energy_binned,
-				'.',lw=0,markersize=10,markeredgewidth=0,alpha=0.2,
-				c=color_list[snum],label=None,zorder=3)
-			q_fit,energy_fit = np.transpose(uspec['points'])
-			ax.plot(q_fit,energy_fit,
-				# '.',lw=0,markersize=4,markeredgewidth=0,alpha=1.,zorder=4,
-				'.',lw=0,markersize=10,markeredgewidth=0,
-				c=color_list[snum],label=None,zorder=3)
-			if 'linear_fit_in_log' in uspec:
-				exponent = uspec['linear_fit_in_log']['c0']
-				status('alternate exponent %.3f'%exponent,tag='note')
-				ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],
-					exponent=-1.0*exponent,area=uspec['area']),lw=3,zorder=5,c='g')
-			elif 'crossover' in uspec:
-				ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=0.0,
-					area=uspec['area']),lw=3,zorder=1,c=color_list[snum])
-				# find the first value above the crossover and shift the tension down
-				#! the following is not working properly
-				ind = np.where(q_fit>uspec['crossover'])[0][0]
-				fac = abs((hqhq(q_fit,kappa=0,sigma=uspec['sigma'],
-					area=uspec['area'])/hqhq(q_fit,kappa=uspec['kappa'],
-					sigma=0,area=uspec['area']))[ind])
-				ax.plot(q_fit,fac*hqhq(q_fit,kappa=0,sigma=uspec['sigma'],
-					area=uspec['area']),lw=3,zorder=1,c=color_list[snum])
-				ax.axvline(uspec['crossover'],c='k',lw=1.0)
-			else:
-				# standard exponent plotting method
-				ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],
-					area=uspec['area']),lw=1,zorder=5,c=color_list[snum])
-				from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-				axins = inset_axes(ax,width="30%",height="30%",loc=3)
-				diffs = (energy_fit-
-					hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],area=uspec['area']))
-				axins.set_title('residuals',fontsize=6)
-				if plotspec['residual_form']=='log': 
-					axins.plot(10**diffs,'.-',lw=0.5,ms=1,color='k')
-					axins.set_xscale('log')
-					axins.set_yscale('log')
-					axins.axhline(1.0,c='k',lw=0.5,alpha=0.5)
-				else: 
-					axins.axhline(0.0,c='k',lw=0.5,alpha=0.5)
-					axins.plot(diffs,'.-',lw=0.5,ms=1,color='k')
-				axins.set_xticks([])
-				axins.set_yticks([])
-				axins.set_xticklabels([])
-				axins.set_yticklabels([])
-				axins.tick_params(axis='y',which='both',left='off',right='off',labelleft='on')
-				axins.tick_params(axis='x',which='both',top='off',bottom='off',labelbottom='on')
-			add_undulation_labels(ax,art=art)
-			add_std_legend(ax,loc='upper right',art=art)
-			add_axgrid(ax,art=art)
-		ax.set_ylim((10**-3,10**1))
-		picturesave('fig.undulation_survey.DEV',work.plotdir,backup=False,version=True,meta={})
+		for style in ['std','ucc']:
+			for snum,(sn,uspec) in enumerate(uspecs.items()):
+
+				if style=='ucc':
+					results = meta_results[hypo_names.index('UCC')]
+					# get the true fitted kappa and sigma from each method
+					uspecs[sn]['kappa'] = results[sn]['kappa'] #! *2 #! WHY?
+					#! factor of two!!!
+					#! [uspecs[sn]['kappa'] for sn in sns_this]
+					uspecs[sn]['gamma'] = uspecs[sn]['sigma'] = results[sn]['sigma']
+					uspecs[sn]['area'] = uspecs[sn]['area']
+					#! uspecs[sn]['crossover'] = 0.03
+					#!!! now it is in the right spot
+
+				q_binned,energy_binned = uspec['q_binned'],uspec['energy_binned']
+				# omitting the binned plot here, which might have more regular spacing?
+				q_fit,energy_fit = np.transpose(uspec['points'])
+				#! plot either the cutoff or complete spectra
+				if 0: ax.plot(q_fit,energy_fit,
+					'.',lw=0,markersize=10,markeredgewidth=0.5,markeredgecolor='k',
+					c=color_list[snum],label=None,zorder=4)
+				else: ax.plot(q_binned,energy_binned,
+					'.',lw=0,markersize=10,markeredgewidth=0.5,markeredgecolor='k',
+					c=color_list[snum],label=None,zorder=4,alpha=1.0)
+				#! override q_fit to show the full spectrum for the undulation coupling method
+				#!   note that this reflects the fact that the limit was probably too high on that method
+				if style=='ucc': q_fit = np.unique(q_binned)
+				if 'linear_fit_in_log' in uspec:
+					exponent = uspec['linear_fit_in_log']['c0']
+					status('alternate exponent %.3f'%exponent,tag='note')
+					ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],
+						exponent=-1.0*exponent,area=uspec['area']),lw=3,zorder=5,c='g')
+				elif 'crossover' in uspec:
+					ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=0.0,
+						area=uspec['area']),lw=3,zorder=1,c=color_list[snum])
+					# find the first value above the crossover and shift the tension down
+					#! the following is not working properly
+					ind = np.where(q_fit>uspec['crossover'])[0][0]
+					fac = abs((hqhq(q_fit,kappa=0,sigma=uspec['sigma'],
+						area=uspec['area'])/hqhq(q_fit,kappa=uspec['kappa'],
+						sigma=0,area=uspec['area']))[ind])
+					ax.plot(q_fit,fac*hqhq(q_fit,kappa=0,sigma=uspec['sigma'],
+						area=uspec['area']),lw=3,zorder=1,c=color_list[snum])
+					ax.axvline(uspec['crossover'],c='k',lw=1.0)
+				# ignoring the plot styles above
+				else:
+					# standard exponent plotting method
+					ax.plot(q_fit,hqhq(q_fit,kappa=uspec['kappa'],sigma=uspec['sigma'],
+						area=uspec['area']),'-' if style=='std' else '--',lw=2,
+						zorder=3,c=color_list[snum],alpha=0.5 if style=='std' else 1.0,)
+				# omitting the residuals
+				add_undulation_labels(ax,art=art)
+				add_std_legend(ax,loc='upper right',art=art)
+				add_axgrid(ax,art=art)
+		ax.set_ylim((10**-5,10**1))
+		# custom legend for replicates by group
+		labels_legend = [i for j in list(zip(*groups)) for i in j]
+		n_reps = int(len(labels_legend)/len(colors))
+		labels = ['%s'%i for i in groups_names]
+		reorder = [j*n_reps+i for i in range(n_reps) 
+			for j in range(len(colors))]
+		color_list = [color_list[i] for i in reorder]
+		# create proxy artists as handles:
+		cmap_handles = [Rectangle((0, 0), 1, 1) for _ in labels]
+		# explain the symbols after thecolors
+		cmap_handles.append(mpl.lines.Line2D([0],[0],
+			marker='.',lw=0,markersize=10,markeredgewidth=0.5,markeredgecolor='k',color='w'))
+		cmap_handles.append(mpl.lines.Line2D([0],[0],
+			linestyle='-',lw=2,markersize=10,markeredgewidth=1,color='k',alpha=0.5))
+		cmap_handles.append(mpl.lines.Line2D([0],[0],
+			linestyle='--',lw=2,markersize=10,markeredgewidth=1,color='k'))
+		labels += ['observed','S1','S2']
+		handler_map = dict(zip(cmap_handles,
+			[HandlerColormap(custom_colors=color_list[ii*n_reps:(ii+1)*n_reps]) 
+			for ii,i in enumerate(labels[:3])]))
+		legend_args = dict(loc='upper right',framealpha=1.0)
+		legend = ax.legend(handles=cmap_handles, 
+			labels=labels, 
+			handler_map=handler_map,
+			fontsize=12,
+			**legend_args)
+		frame = legend.get_frame()
+		legend.set_title('replicates')
+		frame.set_edgecolor('black')
+		frame.set_facecolor('white')
+		# select the relevant metadata here by hypothesis name in the manuscript
+		#   in which S1 is the no-curvature and S2 is the curvature case
+		#   saving the relevant data for each
+		# note that we are currently using v5 which came from dextran_undulation_coupling.py
+		#   and which probably used the "flat" procedure which does not look very good on the 
+		#   undulation spectrum for the no-curvature (S1) case
+		#! the above discrepancy (flat vs average, which looks better) should be checked!
+		# remove tuple keys from the report
+		report_out = dict()
+		for tag in tags:
+			report_out[tag] = {}
+			for sn in sns:
+				report_out[tag][sn] = report[(sn,tag)]
+		# consistency check: meta_results[0]==results
+		meta = {'s1':{'plotspec':plotspec,'results':results},
+			's2':{'tag_this':tag_this,'specs':contents_full,'report':report_out}}
+		#! small differences in the meta cause increasing versions for no reason
+		#! recall that in the first round of plots we looked at three different midplane methods
+		#!   however now we have settled on the "correct" versions
+		#! resetting the meta here
+		meta = {}
+		picturesave('fig.undulation_comparison',work.plotdir,
+			backup=False,version=True,meta=meta)
+
+	if do_meta_comparison_bars:
+
+		"""
+		Accompany the undulation plot with a comparison of the different entropy, kappa, sigma from 
+		the hypotheses we are using.
+		"""
+
+		# this is mostly a conduit after adding meta_results above
+		post_meta = {}
+		for hnum,hypo in enumerate(hypos):
+			post_meta[hnum] = meta_results[hnum]
+
+		# enumerate the readouts
+		tag_this = 'v5'
+		readouts = ['kappa','sigma','Entropy_1','Entropy_2']
+		axes,fig = panelplot(layout={'out':{'grid':[1,len(readouts)]},
+			'ins':[{'grid':[1,1]} for i in readouts]},figsize=(12,4))
+		axes = [i for j in axes for i in j]
+		hypo_colors = ['#66c2a5','#fc8d62','#8da0cb']
+		hypo_colors = ['#e41a1c','#377eb8','#4daf4a']
+		hypo_colors = ['#66c2a5','#fc8d62','#8da0cb','#e78ac3']
+		hypo_colors = ['#e41a1c','#377eb8','#4daf4a','#984ea3']
+		for rnum,readout in enumerate(readouts):
+			ax = axes[rnum]
+			for hnum,hypo in enumerate(hypos):
+				kwargs = {}
+				ax.bar(range(hnum,len(sns)*len(hypos)+hnum,len(hypos)),
+					[post_meta[hnum][sn][readout] for sn in sns],
+					color=hypo_colors[hnum],width=1.0,
+					label=hypo_names[hnum])
+			ax.set_xticklabels(sns,rotation=90)
+			ax.set_xticks(np.arange(0,len(sns)*len(hypos),len(hypos)))
+			ax.set_title(readout)
+		legend = axes[-1].legend(bbox_to_anchor=(1.04,1), borderaxespad=0)
+		picturesave('fig.meta_comparison',work.plotdir,
+			backup=False,version=True,meta={},extras=[legend])
+		# package the meta_results in a text file
+		meta_results_out = dict([(name,meta_results[hnum]) for hnum,name in enumerate(hypo_names)])
+		with open(work.plotdir+'/meta_comparison.json','w') as fp: 
+			fp.write(json.dumps(meta_results_out))
