@@ -26,6 +26,7 @@ def import_membrane_mesh(**kwargs):
 	#---get all of the filenames
 	fns = sorted(glob.glob(os.path.join(location['path'],location['directory'],
 		location['membrane_xyz_glob'])))
+	if not fns: raise Exception('cannot locate files: %s'%location)
 	#---! save timestamps here if desired. ensure synchronicity with the nanogel inputs
 	#---read each file
 	nframes = len(fns)
