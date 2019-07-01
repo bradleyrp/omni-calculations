@@ -145,7 +145,7 @@ class InvestigateCurvature:
 		if not target: raise Exception('add %s and %s to the specs'%(module_name,variable_name))
 		return target
 
-	###---OPTIMIZED SOLUTIONS
+	### OPTIMIZED SOLUTIONS
 
 	def drop_gaussians(self,**kwargs):
 		"""
@@ -154,47 +154,63 @@ class InvestigateCurvature:
 		pos_spec = kwargs.get('curvature_positions',{})
 		method = pos_spec.get('method',None)
 		extent = kwargs.get('extents',{}).get('extent',{})
+		def subsample(n,s):
+			"""For highly-sampled trajectories, we can take subsample of the trajectory."""
+			if s==-1: return np.array(list(range(n)))
+			else: frames = np.linspace(0,n-1,s).round(0).astype(int)
+			if not np.all(frames==np.unique(frames)):
+				raise Exception('repeated frames after subsampling')
+			return frames
+		def populate_fields(fields_unity,reindex,incoming):
+			"""Unpack the curvature fields after parallel computation."""
+			for ii,(fr,ndrop) in enumerate(reindex): 
+				try: fields_unity[np.where(sampled_frames==fr)[0][0]][ndrop] = incoming[ii]
+				except:
+					import ipdb;ipdb.set_trace()
+
+		self.design.get('samples',0)
 		if method=='protein_subselection':
 			for sn in self.sns:
 				selections = pos_spec.get('selections',None)
 				if not selections: raise Exception('need selections in protein_subselection')
-				#---determine the centers of the protein according to the selections
-				#---...noting that the protein_abstractor points are stored by the residue, not bead/atom 
+				# determine the centers of the protein according to the selections
+				#   noting that the protein_abstractor points are stored by the residue, not bead/atom 
 				points = np.array([np.transpose(self.data_prot[sn]['data']['points'],(1,0,2))[s] 
 					for s in selections])
 				points = points.mean(axis=1)[...,:2]
-				#---save the points for later
+				# save the points for later
 				self.memory[(sn,'drop_gaussians_points')] = points
 				ndrops = len(points)
-				#---get data from the memory
+				# get data from the memory
 				hqs = self.memory[(sn,'hqs')]
 				self.nframes = len(hqs)
 				mn = hqs.shape[1:]
 				vecs = self.memory[(sn,'vecs')]
 				vecs_mean = np.mean(vecs,axis=0)
-				#---formulate the curvature request
+				# formulate the curvature request
 				curvature_request = dict(curvature=1.0,mn=mn,sigma_a=extent,sigma_b=extent,theta=0.0)
-				#---construct unity fields
-				fields_unity = np.zeros((self.nframes,ndrops,mn[0],mn[1]))
+				# construct unity fields
+				sampled_frames = subsample(self.nframes,self.design.get('samples',-1))
+				fields_unity = np.zeros((len(sampled_frames),ndrops,mn[0],mn[1]))
 				reindex,looper = zip(*[((fr,ndrop),
 					dict(vecs=vecs[fr],centers=[points[ndrop][fr]/vecs[fr][:2]],**curvature_request)) 
-					for fr in range(self.nframes) for ndrop in range(ndrops)])
+					for fr in sampled_frames for ndrop in range(ndrops)])
 				status('computing curvature fields for %s'%sn,tag='compute')
 				incoming = basic_compute_loop(make_fields,looper=looper)
-				#---! inelegant
 				for ii,(fr,ndrop) in enumerate(reindex): fields_unity[fr][ndrop] = incoming[ii]
 				self.memory[(sn,'fields_unity')] = fields_unity
+				self.memory[(sn,'sampled_frames')] = sampled_frames
 		elif method=='pixel':
-			#---recall that the loop over sns is pretty much redundant
+			#! recall that the loop over sns is pretty much redundant
 			for sn in self.sns:
-				#---construct a box-vector-scaled grid of points which we call "pixels"
-				#---get data from the memory
+				# construct a box-vector-scaled grid of points which we call "pixels"
+				# get data from the memory
 				hqs = self.memory[(sn,'hqs')]
 				self.nframes = len(hqs)
 				mn = hqs.shape[1:]
 				vecs = self.memory[(sn,'vecs')]
 				vecs_mean = np.mean(vecs,axis=0)
-				#---get the grid spacing from the metadata
+				# get the grid spacing from the metadata
 				spacer = pos_spec.get('spacer',None)
 				spacer_x,spacer_y = [pos_spec.get('spacer_%s'%i,spacer) for i in 'xy']
 				npts = (vecs_mean[:2]/np.array([spacer_x,spacer_y])).astype(int)
@@ -205,21 +221,22 @@ class InvestigateCurvature:
 				points = np.array([np.concatenate(np.transpose(np.meshgrid(*fence[fr]))) 
 					for fr in range(self.nframes)])
 				ndrops = len(points[0])
-				#---formulate the curvature request
+				# formulate the curvature request
 				curvature_request = dict(curvature=1.0,mn=mn,sigma_a=extent,sigma_b=extent,theta=0.0)
-				#---construct unity fields
-				fields_unity = np.zeros((self.nframes,ndrops,mn[0],mn[1]))
+				# construct unity fields
+				sampled_frames = subsample(self.nframes,self.design.get('samples',-1))
+				fields_unity = np.zeros((len(sampled_frames),ndrops,mn[0],mn[1]))
 				reindex,looper = zip(*[((fr,ndrop),
 					dict(vecs=vecs[fr],centers=[points[fr][ndrop]/vecs[fr][:2]],**curvature_request)) 
-					for fr in range(self.nframes) for ndrop in range(ndrops)])
+					for fr in sampled_frames for ndrop in range(ndrops)])
 				status('computing curvature fields for %s'%sn,tag='compute')
 				incoming = basic_compute_loop(make_fields,looper=looper)
-				#---! inelegant
-				for ii,(fr,ndrop) in enumerate(reindex): fields_unity[fr][ndrop] = incoming[ii]
+				populate_fields(fields_unity,reindex,incoming)
 				self.memory[(sn,'fields_unity')] = fields_unity
 				self.memory[(sn,'drop_gaussians_points')] = points
+				self.memory[(sn,'sampled_frames')] = sampled_frames
 		elif method=='neighborhood':
-			#---extra distance defines a border around the average hull
+			# extra distance defines a border around the average hull
 			extra_distance = pos_spec['distance_cutoff']
 			spacer = pos_spec['spacer']
 			def rotate2d(pts,angle):
@@ -229,30 +246,31 @@ class InvestigateCurvature:
 			def arange_symmetric(a,b,c):
 				return np.unique(np.concatenate((np.arange(a,b,c),-1*np.arange(a,b,c))))
 			for sn in self.sns:
-
-				###---!!! beware this code might have an indexing problem !!!
-
-				#---nope .. now that you fixed the index error each protein gets its own neighborhood presumably with an indeterminate position
-
-				#---for each frame we compute the centroid and orientation
+				# previous notes:
+				#   beware this code might have an indexing problem !!!
+				#   nope: now that you fixed the index error each protein gets its own neighborhood presumably 
+				# for each frame we compute the centroid and orientation
 				points_all = self.data_prot[sn]['data']['points_all']
 				cogs = points_all.mean(axis=2).mean(axis=1)[:,:2]
-				#---get the average set of points
+				# get the average set of points
 				average_pts = points_all.mean(axis=0).mean(axis=0)[:,:2]
 				average_pts -= average_pts.mean(axis=0)
 				average_axis = principal_axis(average_pts)
 				angle = np.arccos(np.dot(vecnorm(average_axis),[1.0,0.0]))
 				direction = 1.0-2.0*(np.cross(vecnorm(average_axis),[1.0,0.0])<0)
 				rot = rotate2d(average_pts,direction*angle)
-				#---get the span of the points plus the extra distance in each direction
+				# get the span of the points plus the extra distance in each direction
 				span_x,span_y = np.abs(rot).max(axis=0) + extra_distance
 				ref_grid = np.concatenate(np.transpose(np.meshgrid(
 					arange_symmetric(0,span_x,spacer),arange_symmetric(0,span_y,spacer))))
-				#import matplotlib as mpl;import matplotlib.pyplot as plt;ax = plt.subplot(111);ax.scatter(*average_pts.T);plt.show()
+				#! debugging
+				if False:
+					import matplotlib as mpl;import matplotlib.pyplot as plt;
+					ax = plt.subplot(111);ax.scatter(*average_pts.T);plt.show()
 				#import ipdb;ipdb.set_trace()
 				vecs = self.memory[(sn,'vecs')]
 				vecs_mean = np.mean(vecs,axis=0)
-				#---for each frame, map the ref_grid onto the principal axis
+				# for each frame, map the ref_grid onto the principal axis
 				#! self.nframes = len(points_all)
 				self.nframes = len(vecs)
 				points = np.zeros((len(ref_grid),self.nframes,2))
@@ -263,13 +281,13 @@ class InvestigateCurvature:
 					angle = np.arccos(np.dot(vecnorm(average_axis),[1.0,0.0]))
 					direction = 1.0-2.0*(np.cross(vecnorm(average_axis),[1.0,0.0])<0)
 					ref_grid_rot = rotate2d(ref_grid,direction*angle)+offset
-					#---handle PBCs by putting everything back in the box
+					# handle PBCs by putting everything back in the box
 					try: ref_grid_rot_in_box = (ref_grid_rot + 
 						(ref_grid_rot<0)*vecs[fr,:2] - (ref_grid_rot>=vecs[fr,:2])*vecs[fr,:2])
 					except:
 						import ipdb;ipdb.set_trace()
 					points[:,fr] = ref_grid_rot_in_box
-				#---debug with a plot if desired
+				# debug with a plot if desired
 				if False:
 					import matplotlib.pyplot as plt
 					plt.scatter(*ref_grid_rot_in_box.T)
@@ -278,55 +296,59 @@ class InvestigateCurvature:
 					picturesave(fn,self.work.plotdir)
 					raise Exception('dropped debugging image for your review and deletion '
 						'to %s. remove it and then turn this debugger off to continue'%fn)
-				#---save the position of the curvature fields for later
+				# save the position of the curvature fields for later
 				self.memory[(sn,'drop_gaussians_points')] = points
 				ndrops = len(ref_grid)
-				#---! ULTRA REPETITIVE WITH THE OTHER OPTIONS
-				#---get data from the memory
+				#! repetitive with other options
+				# get data from the memory
 				hqs = self.memory[(sn,'hqs')]
 				mn = hqs.shape[1:]
-				#---formulate the curvature request
+				# formulate the curvature request
 				curvature_request = dict(curvature=1.0,mn=mn,sigma_a=extent,sigma_b=extent,theta=0.0)
-				#---construct unity fields
-				fields_unity = np.zeros((self.nframes,ndrops,mn[0],mn[1]))
+				# construct unity fields
+				sampled_frames = subsample(self.nframes,self.design.get('samples',-1))
+				fields_unity = np.zeros((len(sampled_frames),ndrops,mn[0],mn[1]))
 				reindex,looper = zip(*[((fr,ndrop),
 					dict(vecs=vecs[fr],centers=[points[ndrop][fr]/vecs[fr][:2]],**curvature_request)) 
-					for fr in range(self.nframes) for ndrop in range(ndrops)])
+					for fr in sampled_frames for ndrop in range(ndrops)])
 				status('computing curvature fields for %s'%sn,tag='compute')
 				incoming = basic_compute_loop(make_fields,looper=looper,run_parallel=True)
-				#---! inelegant
-				for ii,(fr,ndrop) in enumerate(reindex): fields_unity[fr][ndrop] = incoming[ii]
+				populate_fields(fields_unity,reindex,incoming)
 				self.memory[(sn,'fields_unity')] = fields_unity
+				self.memory[(sn,'sampled_frames')] = sampled_frames
+				#! debugging
 				if False:
-					import matplotlib as mpl;import matplotlib.pyplot as plt;plt.imshow(fields_unity[0][0].T);plt.show()
+					import matplotlib as mpl;import matplotlib.pyplot as plt;
+					plt.imshow(fields_unity[0][0].T);plt.show()
 					import ipdb;ipdb.set_trace()
-		#---one field per protein, for all proteins
+		# one field per protein, for all proteins
 		elif method=='protein_dynamic_single':
-			#---! the following code is very repetitive with the protein subselection method
+			#! the following code is very repetitive with the protein subselection method
 			for sn in self.sns:
-				#---points_all is nframes by proteins by beads/atoms by XYZ
+				# points_all is nframes by proteins by beads/atoms by XYZ
 				points = self.data_prot[sn]['data']['points_all'].mean(axis=2)[...,:2].transpose(1,0,2)
-				#---save the points for later
+				# save the points for later
 				self.memory[(sn,'drop_gaussians_points')] = points
 				ndrops = len(points)
-				#---get data from the memory
+				# get data from the memory
 				hqs = self.memory[(sn,'hqs')]
 				self.nframes = len(hqs)
 				mn = hqs.shape[1:]
 				vecs = self.memory[(sn,'vecs')]
 				vecs_mean = np.mean(vecs,axis=0)
-				#---formulate the curvature request
+				# formulate the curvature request
 				curvature_request = dict(curvature=1.0,mn=mn,sigma_a=extent,sigma_b=extent,theta=0.0)
-				#---construct unity fields
-				fields_unity = np.zeros((self.nframes,ndrops,mn[0],mn[1]))
+				# construct unity fields
+				sampled_frames = subsample(self.nframes,self.design.get('samples',-1))
+				fields_unity = np.zeros((len(sampled_frames),ndrops,mn[0],mn[1]))
 				reindex,looper = zip(*[((fr,ndrop),
 					dict(vecs=vecs[fr],centers=[points[ndrop][fr]/vecs[fr][:2]],**curvature_request)) 
-					for fr in range(self.nframes) for ndrop in range(ndrops)])
+					for fr in sampled_frames for ndrop in range(ndrops)])
 				status('computing curvature fields for %s'%sn,tag='compute')
 				incoming = basic_compute_loop(make_fields,looper=looper)
-				#---! inelegant
-				for ii,(fr,ndrop) in enumerate(reindex): fields_unity[fr][ndrop] = incoming[ii]
+				populate_fields(fields_unity,reindex,incoming)
 				self.memory[(sn,'fields_unity')] = fields_unity
+				self.memory[(sn,'sampled_frames')] = sampled_frames
 		else: raise Exception('invalid selection method')
 
 	def curvature_sum(self,cfs,curvatures,**kwargs):
@@ -350,27 +372,30 @@ class InvestigateCurvature:
 		extents = spec.get('extents',{})
 		extents_method = extents.get('method')
 		curvature_sum_method = self.design['curvature_sum']
-		#---special handling for pixel extents if None: extent is half the spacer
-		#---! should this check of the curvature position method is pixel?
+		# special handling for pixel extents if None: extent is half the spacer
+		#! should this check if the curvature position method is pixel?
 		if extents.get('extent',False)==None and spec['curvature_positions']['method']:
 			extents['extent'] = spec['curvature_positions']['spacer']/2.
-		#---prepare curvature fields
+		# prepare curvature fields
 		if extents_method=='fixed_isotropic': self.drop_gaussians(**spec)
 		elif extents_method=='protein_dynamic': pass
 		else: raise Exception('invalid extents_method %s'%extents_method)
-		#---in the previous version we manually saved the data (and checked if it was already computed here)
-		#---...however this class has been ported directly into omnicalc now
-		#---optimize over simulations
+		# in the previous version we manually saved the data (and checked if it was already computed here)
+		#   however this class has been ported directly into omnicalc now
+		# optimize over simulations
 		for snum,sn in enumerate(self.sns):
 			status('starting optimization for %s %d/%d'%(sn,snum+1,len(self.sns)),tag='optimize')
 
-			#---load the source data
-			hqs = self.memory[(sn,'hqs')][:self.nframes]
-			cfs = self.memory[(sn,'fields_unity')][:self.nframes]
-			vecs = self.memory[(sn,'vecs')][:self.nframes]
+			# load the source data
+			hqs = self.memory[(sn,'hqs')]
+			cfs = self.memory[(sn,'fields_unity')]
+			vecs = self.memory[(sn,'vecs')]
 			ndrops = cfs.shape[1]
+			sampled_frames = self.memory[(sn,'sampled_frames')]
+			hqs = hqs[sampled_frames]
+			vecs = vecs[sampled_frames]
 
-			#---formulate the wavevectors
+			# formulate the wavevectors
 			lenscale = 1.0
 			m,n = mn = np.shape(hqs)[1:]
 			Lx,Ly = np.mean(vecs,axis=0)[:2]
@@ -419,7 +444,7 @@ class InvestigateCurvature:
 				cqs = cctools.fft_field(composite)
 				termlist = [multipliers(x,y) for x,y in [(hqs,hqs),(hqs,cqs),(cqs,hqs),(cqs,cqs)]]
 				termlist = [np.reshape(np.mean(k,axis=0),-1)[1:] for k in termlist]
-				#---skipping assertion and dropping imaginary
+				# skipping assertion and dropping imaginary
 				termlist = [np.real(k) for k in termlist]
 				hel = (kappa/2.0*area*(termlist[0]*q_raw**4+signterm*termlist[1]*q_raw**2
 					+signterm*termlist[2]*q_raw**2+termlist[3])
@@ -434,30 +459,44 @@ class InvestigateCurvature:
 			test_ans = objective(initial_conditions)
 			if not isinstance(test_ans,np.floating): 
 				raise Exception('objective_residual function must return a scalar')
+			# select an optimization method
+			methods_opt = dict([
+				('SLSQP',{'maxiter':1000}),
+				('BFGS',{})])
+			method_opt = self.design.get('optimize_method','BFGS')
+			method_args = methods_opt[method_opt]
+			spec['opt'] = {'method_opt':method_opt,'method_args':method_args}
 			fit = scipy.optimize.minimize(objective,
-				x0=tuple(initial_conditions),method='SLSQP',callback=callback)
+				x0=tuple(initial_conditions),method=method_opt,
+				callback=callback,options=method_args)
 			#! protect aagainst failure after a very long time waiting
 			try: 
-				#---package the result
+				# package the result
 				bundle[sn] = dict(fit,success=str(fit.success))
+				# pop some data that we cannot save
+				if method_opt=='BFGS':
+					if 'hess_inv' in bundle[sn]:
+						del bundle[sn]['hess_inv']
 				solutions['x'] = bundle[sn].pop('x')
 				solutions['jac'] = bundle[sn].pop('jac')
 				solutions['cf'] = np.array(self.curvature_sum(cfs,fit.x[3:],
 					method=curvature_sum_method).mean(axis=0))
 				solutions['cf_first'] = np.array(self.curvature_sum(cfs,fit.x[3:],
 					method=curvature_sum_method)[0])
-				#---save explicit fields
+				# save explicit fields
 				if spec.get('store_instantaneous_fields',False):
-					solutions['cfs'] = np.array(self.curvature_sum(cfs,fit.x[3:],method=curvature_sum_method))
-				#---we also save the dropped gaussian points here
+					solutions['cfs'] = np.array(self.curvature_sum(
+						cfs,fit.x[3:],method=curvature_sum_method))
+				# we also save the dropped gaussian points here
 				if extents_method=='fixed_isotropic': 
 					solutions['drop_gaussians_points'] = self.memory[(sn,'drop_gaussians_points')]
 				else: raise Exception('invalid extents_method %s'%extents_method)
 				solutions['ratios'] = objective(fit.x,mode='ratio')
 				solutions['qs'] = q_raw
 			except:
+				print('error failure during optimization and here is a handy terminal')
 				import ipdb;ipdb.set_trace()
-		#---we return contributions to result,attrs for the calculation
+		# we return contributions to result,attrs for the calculation
 		return dict(result=solutions,attrs=dict(bundle=bundle,spec=spec))
 
 	def protein_dynamic_standard(self,**kwargs):
@@ -471,17 +510,18 @@ class InvestigateCurvature:
 		extents = spec.get('extents',{})
 		extents_method = extents.get('method')
 		curvature_sum_method = self.design['curvature_sum']
-		#---optimize over simulations
+		# optimize over simulations
 		for snum,sn in enumerate(self.sns):
 			status('starting optimization for %s %d/%d'%(sn,snum+1,len(self.sns)),tag='optimize')
 
-			#---load the source data
+			# load the source data
 
 			hqs = self.memory[(sn,'hqs')]
 			self.nframes = len(hqs)
 			### cfs = self.memory[(sn,'fields_unity')][:self.nframes]
 			vecs = self.memory[(sn,'vecs')][:self.nframes]
-			#ndrops = 
+			#! 
+			raise Exception('under development. check sampled_frames from the memory')
 
 			#---formulate the wavevectors
 			lenscale = 1.0

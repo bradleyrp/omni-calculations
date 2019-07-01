@@ -120,6 +120,8 @@ def load():
 		contents[tag] = dict([(k,spec['specs'][k]) 
 			for k in ['design','fitting']])
 		contents_full[tag] = spec
+	# more sensible name
+	design_sweep = contents_full
 
 def color_vary(colors,n,p=0.2):
 	"""
@@ -515,7 +517,7 @@ def calculate_entropy(*args,**kwargs):
 	Entropy = Entropy_term*kB*6.022140857E23 # j/K/mol
 	return Entropy
 
-if __name__=='__main__':
+if __name__=='__main__' and 0:
 
 	"""
 	USAGE
@@ -524,9 +526,9 @@ if __name__=='__main__':
 	"""
 
 	do_full_plots = False
-	do_meta_comparison = True
-	do_combined_undulation_plot = True
-	do_meta_comparison_bars = True
+	do_meta_comparison = False
+	do_combined_undulation_plot = False
+	do_meta_comparison_bars = False
 
 	# ENTROPY METHOD 1 (set True/1 to try this)
 	if do_meta_comparison or 'meta_results' not in globals():
@@ -946,3 +948,83 @@ if __name__=='__main__':
 		meta_results_out = dict([(name,meta_results[hnum]) for hnum,name in enumerate(hypo_names)])
 		with open(work.plotdir+'/meta_comparison.json','w') as fp: 
 			fp.write(json.dumps(meta_results_out))
+
+if __name__=='__main__':
+
+	"""
+	Refactoring NOW.
+	"""
+
+	do_survey_one = True
+
+	if do_survey_one:
+
+		"""
+		the tags and contents_full variables outline the design space
+		select a single simulation and plot the curvature fields and undulations 
+		"""
+		# assume all is set to a single simulation
+		sns = work.metadata.collections['all']
+		if len(sns)!=1: 
+			raise Exception('the "all" collection must have one simulation')
+		sn = sns[0]
+
+		# plot all of the energy spectra
+		tag_this = 'v01'
+
+		axes,fig = panelplot(layout={'out':{'grid':[2,1]},
+			'ins':[{'grid':[1,4]},{'grid':[1,4]}]},figsize=(14,8))
+		axes = {
+			'error':axes[0][0],'spectrum':axes[0][1],'residuals':axes[0][2],
+			'strengths':axes[0][3],'fields':axes[1]}
+		colors = ['#e41a1c','#377eb8','#4daf4a','#984ea3']
+		cmap_name = 'RdBu_r'
+		labels = {}
+		for tnum,tag_this in enumerate(tags):
+			data_ucc.set(select=design_sweep[tag_this]['specs'])
+			dat = data_ucc.this
+			result = package_ucc(dat,sns)
+			high_cutoff = design_sweep[tag_this]['specs']['fitting']['high_cutoff']
+			qs,energy = result['qs'][sn],result['energy'][sn]
+			ax = axes['spectrum']
+			ax.scatter(qs,energy,label=tag_this,c=colors[tnum])
+			ax.axvline(high_cutoff,c='k')
+			ax.axhline(10**0,c='k')
+			ax.set_xscale('log')
+			ax.set_yscale('log')
+			ax = axes['residuals']
+			fitted_inds = np.where(qs<=high_cutoff)
+			x,y = qs,energy-10**0
+			opt_method = design_sweep[tag_this]['specs']['design']['optimize_method']
+			samples = design_sweep[tag_this]['specs']['design']['samples']
+			label = '%s: %s,%s'%(tag_this,
+				design_sweep[tag_this]['specs']['design']['optimize_method'],
+				{-1:'all'}.get(samples,'%d'%samples))
+			labels[tag_this] = label
+			ax.scatter(x[fitted_inds],y[fitted_inds],label=label,c=colors[tnum])
+			ax.axhline(0,c='k')
+		# collect errors
+		errors = []
+		for tnum,tag_this in enumerate(tags):
+			data_ucc.set(select=design_sweep[tag_this]['specs'])
+			error = data_ucc.this[sn]['bundle'][sn]['fun']
+			errors.append(error)
+		ax = axes['error']
+		ax.bar(range(len(tags)),errors,color=colors)
+		legend = axes['residuals'].legend(bbox_to_anchor=(1.04,1), borderaxespad=0)
+		curvatures = {}
+		for tnum,tag_this in enumerate(tags):
+			data_ucc.set(select=design_sweep[tag_this]['specs'])
+			cf = data_ucc.this[sn]['cf']
+			curvatures[tag_this] = cf
+		c0_max = max([np.abs(i).max() for i in curvatures.values()])
+		for tnum,tag_this in enumerate(tags):
+			cf = curvatures[tag_this]
+			ax = axes['fields'][tnum]
+			# if you do not zero-center this, the background color indicates the net curvature
+			#   direction, for example, if it is salmon (red) then the net curvature is more red
+			ax.imshow(cf.T,interpolation='nearest',cmap=mpl.cm.__dict__[cmap_name],
+				vmax=c0_max,vmin=-1*c0_max)
+			ax.set_title(labels[tag_this])
+		picturesave('fig.DEV01',work.plotdir,
+			backup=False,version=True,meta={},extras=[legend])
