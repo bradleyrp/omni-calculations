@@ -34,7 +34,7 @@ def datmerge(kwargs,name,key,same=False):
 		#---! this function seems to require upstream data so we except here
 		if 'upstream' not in kwargs: raise Exception('datmerge needs upstream pointers')
 		#---get indices for the upstream object added by computer
-		inds = [int(re.findall(name+'(\d+)',i)[0]) for i in kwargs['upstream'] if re.match(name,i)]
+		inds = [int(re.findall(name+r'(\d+)',i)[0]) for i in kwargs['upstream'] if re.match(name,i)]
 		collected = [kwargs['upstream']['%s%d'%(name,i)][key] for i in sorted(inds)]
 		if not same:
 			if collected==[]: raise Exception('collected is empty, argument to datmerge is wrong')
