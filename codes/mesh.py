@@ -511,7 +511,11 @@ def aind(x):
 	"""Convert back to advanced indexing."""
 	return tuple(x.T)
 
-def vecnorm(x): return x/np.linalg.norm(x)
+def vecnorm(x):
+	norm = np.linalg.norm(x)
+	if norm==0: return x
+	else: return x/norm
+
 def planeproject(x,n): return x-np.dot(x,n)/np.linalg.norm(n)*vecnorm(n)
 
 def get_normal_fluctuation(hover,target,normal,vec):
