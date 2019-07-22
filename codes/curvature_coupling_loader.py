@@ -37,6 +37,8 @@ def curvature_coupling_loader_membrane(data,**kwargs):
 				zmean = midplane.mean(axis=0)
 				midplane -= zmean
 			else: raise Exception('invalid midplane method %s'%midplane_method)
+			#! added this but not sure that it's necessary
+			memory[(sn,'midplane')] = midplane
 			hqs = fft_field(midplane)
 			memory[(sn,'hqs')] = hqs
 			memory[(sn,'vecs')] = vecs

@@ -4,14 +4,14 @@
 
 variables:
   raw_data:
-    semi_rigid: /home/rpb/liminal/samrad-curvature/ResultsForSemiRigid
+    semi_rigid: /home/rpb/liminal/samrad-curvature/Low_Excess_Area/ResultsForSemiRigid
+    rigid: /home/rpb/liminal/samrad-curvature/Low_Excess_Area/ResultsForRigid
+    semi_rigid_50: /home/rpb/liminal/samrad-curvature/Low_Excess_Area/ResultsForSemiRigidRad50
     low_dex: /home/rpb/liminal/samrad-curvature/Low_Excess_Area/ResultsForDex
 
 # groups of simulations to analyze together (REQUIRED)
 collections:
   all:
-    - CL160ENS-1
-  more:
     - SemiRigidE1
     - SemiRigidE2
     - SemiRigidE3
@@ -30,43 +30,43 @@ slices:
   SemiRigidE1:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForSemiRigid
+        path: +raw_data/semi_rigid
         directory: SemiRigidE1
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
   SemiRigidE2:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForSemiRigid
+        path: +raw_data/semi_rigid
         directory: SemiRigidE2
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
   SemiRigidE3:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForSemiRigid
-        directory: SemiRigidE3 #! an error!
+        path: +raw_data/semi_rigid
+        directory: SemiRigidE3
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
 
   RigidNCE1:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForRigid
+        path: +raw_data/rigid
         directory: RigidNCE1
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
   RigidNCE2:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForRigid
+        path: +raw_data/rigid
         directory: RigidNCE2
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
   RigidNCE3:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForRigid
+        path: +raw_data/rigid
         directory: RigidNCE3
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
@@ -74,21 +74,21 @@ slices:
   SemiRigidE1_50:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForSemiRigidRad50
+        path: +raw_data/semi_rigid_50
         directory: SemiRigidE1_50
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
   SemiRigidE2_50:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForSemiRigidRad50
+        path: +raw_data/semi_rigid_50
         directory: SemiRigidE2_50
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
   SemiRigidE3_50:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForSemiRigidRad50
+        path: +raw_data/semi_rigid_50
         directory: SemiRigidE3_50
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NC-Antibody-Data-ENS-0_Frame-0.dat
@@ -103,14 +103,14 @@ slices:
   CL160ENS-2:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForDex
+        path: +raw_data/low_dex
         directory: CL160ENS-2
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NG_Position-0_Frame-0.dat
   CL160ENS-3:
     readymade_meso_v1:
       current:
-        path: /home/localshare/samrad-curvature/Low_Excess_Area/ResultsForDex
+        path: +raw_data/low_dex
         directory: CL160ENS-3
         membrane_xyz_glob: memb_xyz-0-0-*.xyz
         nanogel_dat: NG_Position-0_Frame-0.dat
@@ -208,18 +208,6 @@ calculations:
         high_cutoff: 0.2
       design:
         loop:
-          v01:
-            samples: 100
-            optimize_method: SLSQP
-            style: wilderness
-            curvature_positions: 
-              method: neighborhood
-              distance_cutoff: 50.0
-              spacer: 40.0
-            extents:
-              method: fixed_isotropic
-              extent: 20.0
-            curvature_sum: mean
           v02:
             samples: 100
             optimize_method: BFGS
@@ -232,30 +220,24 @@ calculations:
               method: fixed_isotropic
               extent: 20.0
             curvature_sum: mean
-          v03:
-            samples: -1
-            optimize_method: SLSQP
-            style: wilderness
-            curvature_positions: 
-              method: neighborhood
-              distance_cutoff: 50.0
-              spacer: 40.0
-            extents:
-              method: fixed_isotropic
-              extent: 20.0
-            curvature_sum: mean
-          v04:
+          v07: # same as v07 in the survey, but with all frames
             samples: -1
             optimize_method: BFGS
+            bin_width: False
+            perfect_collapse: True
+            initial_fit: True
+            vibe: False
             style: wilderness
+            midplane_method: flat
             curvature_positions: 
               method: neighborhood
-              distance_cutoff: 50.0
+              distance_cutoff: 100.0
               spacer: 40.0
             extents:
               method: fixed_isotropic
               extent: 20.0
             curvature_sum: mean
+
 plots:
 
   curvature_undulation_coupling:
@@ -267,6 +249,22 @@ plots:
       undulations_average_normal: {}
     specs:
       calcname: curvature_undulation_coupling_dex
+      loader: 
+        module: calcs.codes.curvature_coupling_loader_dex
+        function: prepare_mesoscale_postdat
+      undulations_name: import_readymade_meso_v1_membrane
+      protein_abstractor_name: import_readymade_meso_v1_nanogel
+
+  #! another part of the hack
+  curvature_undulation_coupling_fold:
+    script: dextran_undulation_review.py
+    collections: all
+    calculation: 
+      import_readymade_meso_v1_nanogel: {}
+      import_readymade_meso_v1_membrane: {}
+      undulations_average_normal: {}
+    specs:
+      calcname: curvature_undulation_coupling_dex_fold
       loader: 
         module: calcs.codes.curvature_coupling_loader_dex
         function: prepare_mesoscale_postdat

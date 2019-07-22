@@ -37,12 +37,12 @@ def blurry_binner(xs,ys,bin_width=0.05,trim=True):
 	Group wavevectors by bins.
 	"""
 	blurred = (xs/bin_width).astype(int)
-	xsort = array(sort(list(set(blurred))))
+	xsort = np.sort(np.unique(blurred))
 	if trim: xsort = xsort[1:]
-	inds = argmax(array([(xs/bin_width).astype(int)==xsort[i] for i in range(len(xsort))]),axis=0)
-	if type(ys)!=ndarray: coly = None
-	else: coly = array([mean(ys[where(inds==i)]) for i in range(len(xsort))])
-	colx = array([mean(xs[where(inds==i)]) for i in range(len(xsort))])
+	inds = np.argmax(np.array([(xs/bin_width).astype(int)==xsort[i] for i in range(len(xsort))]),axis=0)
+	if type(ys)!=np.ndarray: coly = None
+	else: coly = np.array([np.mean(ys[np.where(inds==i)]) for i in range(len(xsort))])
+	colx = np.array([np.mean(xs[np.where(inds==i)]) for i in range(len(xsort))])
 	return colx,coly,inds
 
 def undulation_fitter(q_raw,hqs,area,initial_conditions=(20.0,0.0),residual_form='linear'):
@@ -90,7 +90,7 @@ def undulation_fitter(q_raw,hqs,area,initial_conditions=(20.0,0.0),residual_form
 
 def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 	perfect=False,raw=False,midplane_method=None,custom_heights=None,
-	residual_form='log',fit_tension=False):
+	residual_form='log',fit_tension=False,bin_size=False):
 	"""
 	Compute undulation spectrum.
 	"""
@@ -125,7 +125,8 @@ def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 	packed = {}
 	#---choose a binning method, range method, and fitting method
 	if fit_style in ['band,perfect,simple','band,perfect,basic',
-		'band,perfect,fit','band,perfect,curvefit','band,perfect,curvefit-crossover']:
+		'band,perfect,fit','band,perfect,curvefit','band,perfect,curvefit-crossover',
+		'band,blurry,curvefit']:
 
 		if lims==None: raise Exception('fit_style %s requires lims'%fit_style)
 		#---collapse, perfectly
@@ -151,19 +152,23 @@ def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 			kappa,gamma = 1./(10**c1*area)*2.0,0.0
 			#---save for debugging
 			packed['linear_fit_in_log'] = dict(c0=c0,c1=c1)
-		elif fit_style=='band,perfect,curvefit':
+		elif fit_style in ['band,perfect,curvefit','band,blurry,curvefit']:
 			#---in this method we use the scipy curve_fit function
 			exponent = 4.0
 			kwargs = {}
 			kwargs.update(bounds=((5.0,-1.0),(10**2.0,1.0)))
 			kwargs.update(maxfev=10**5)
+			if fit_style=='band,blurry,curvefit':
+				# perform the binning
+				x2,y2 = blurry_binner(x,x,bin_width=bin_size)[1],blurry_binner(x,y,bin_width=bin_size)[1]
+				goodslice = np.where(np.all((x2>lims[0],x2<lims[1]),axis=0))
+				x3,y3 = x2[goodslice],y2[goodslice]
 			if residual_form=='linear':
 				def hqhq(q_raw,kappa,sigma):	
 					if not fit_tension: sigma = 0.0
 					return 1.0/(area/2.0*(kappa*q_raw**(exponent)+sigma*q_raw**2))
 				fit = scipy.optimize.curve_fit(hqhq,x3,y3,**kwargs)
 				kappa,gamma = fit[0][0],fit[0][1]
-				print(gamma)
 			elif residual_form=='log':
 				#---! deprecated but works
 				if False:
@@ -179,7 +184,6 @@ def calculate_undulations(surf,vecs,fit_style=None,chop_last=False,lims=(0,1.0),
 					fit = scipy.optimize.curve_fit(hqhq,x3,np.log10(y3),**kwargs)
 				kappa,gamma = fit[0][0],fit[0][1]
 			else: raise Exception('invalid residual_form %s'%residual_form)
-
 		elif fit_style=='band,perfect,curvefit-crossover':
 			#---in this method we use the scipy curve_fit function
 			exponent = 4.0

@@ -103,29 +103,62 @@ def load():
 	work = WorkSpace(analysis=True)
 	plotspecs = work.metadata.plots[plotname].get('specs',{})
 	calcname = plotspecs.get('calcname',plotname)
+	#! this is necessary for dextran_2019711_combine_plot.yaml
+	colcomb = work.metadata.director.get('collections_combine',False) 
+	plargs = {}
+	if colcomb: plargs = dict(collections=['all150','all100'])
 	# collect data
-	data = work.plotload(plotname=plotname)
+	data = work.plotload(plotname=plotname,**plargs)
 	sns = sns_ordered = work.sns()
+	# custom method for merging for a specific meta filter
+	is_custom = ('dextran_20190711_combine_plot.yaml' in 
+		[os.path.basename(i) for i in work.metadata.specs_files])
+	if is_custom:
+		# custom override
+		request_calc = {
+			'curvature_undulation_coupling_dex_1':
+				work.metadata.calculations['curvature_undulation_coupling_dex_1'].get('specs',{}),
+			'curvature_undulation_coupling_dex_2':
+				work.metadata.calculations['curvature_undulation_coupling_dex_2'].get('specs',{})}
+		calcnames_this = [
+			'curvature_undulation_coupling_dex_1',
+			'curvature_undulation_coupling_dex_2']
+		plargs['request_calc_override'] = request_calc
+	else: calcnames_this = [calcname]
 	# separate plotload for the entire undulation coupling loop
-	data_ucc = this = work.plotload(calcname)
-	# fetch all hypotheses for the calculation
-	upstreams,upstreams_stubs = work.calcs.unroll_loops(
-		work.metadata.calculations[calcname],return_stubs=True)
-	# get tags for the hypotheses
-	tags = [delve(i,'specs','design') for i in upstreams_stubs]
-	# prepare a readable set of hypotheses
+	data_ucc = this = work.plotload(calcname,**plargs)
 	contents,contents_full = {},{}
-	# the tags and specs are in sequence from unroll_loops
-	for tag,spec,stub in zip(tags,upstreams,upstreams_stubs):
-		contents[tag] = dict([(k,spec['specs'][k]) 
-			for k in ['design','fitting']])
-		contents_full[tag] = spec
-	# more sensible name
-	design_sweep = contents_full
+	# loop over calculations contributing to this sweep
+	for calcname in calcnames_this:
+		upstreams,upstreams_stubs = work.calcs.unroll_loops(
+			work.metadata.calculations[calcname],return_stubs=True)
+		# get tags for the hypotheses
+		tags = [delve(i,'specs','design') for i in upstreams_stubs]
+		# the tags and specs are in sequence from unroll_loops
+		for tag,spec,stub in zip(tags,upstreams,upstreams_stubs):
+			if tag in contents: 
+				raise Exception(('contents already has this tag (%s) '
+					'hence the merge failed!')%tag)
+			contents[tag] = dict([(k,spec['specs'][k]) 
+				for k in ['design','fitting']])
+			contents_full[tag] = spec
+		# more sensible name
+		design_sweep = contents_full
+	if is_custom:
+		#! this merges simulations from the two calculations (_1, _2) 
+		#!   so they are available in one "this". note that data_ucc.set 
+		#!   should not be needed for data_ucc. be careful with this!
+		data_ucc.this = dict([(sn,data_ucc.data[ii][sn]['data']) 
+			for ii,i in enumerate(data_ucc.names) for sn in data_ucc.data[ii]]) 
+		#! !!! sns = data_ucc.this.keys()
+		sns = ['RigidNCE1', 'RigidNCE2', 'RigidNCE3', 'SemiRigidE1_50', 
+			'SemiRigidE2_50', 'SemiRigidE3_50', 'CL160ENS-1', 'CL160ENS-2', 'CL160ENS-3']
 
 def color_vary(colors,n,p=0.2):
 	"""
-	Given a list of colors
+	Given a list of colors, make some variations around those colors.
+	Originally designed to trace a path through color space, however it makes
+	more sense to just vary around a base color by darkness levels.
 	"""
 	colors_out = []
 	for cnum,color in enumerate(colors):
@@ -137,7 +170,7 @@ def color_vary(colors,n,p=0.2):
 		for ii,i in enumerate(subdiv):
 			if i<=1: x = left+i*(center-left)
 			else: x = center+(i-1.0)*(right-center)
-			#! scaling by gaps was wrong here!
+			#! scaling by gaps was wrong here! write it in your log!
 			if any([i<0 or i>1 for i in x]):
 				raise Exception('error')
 			colors_sub.append(x)
@@ -434,11 +467,12 @@ def package_ucc(dat,sns):
 	params = dict([(sn,dict(list(zip(('kappa','gamma'),
 		dat[sn]['x'][:2])))) for sn in sns])
 	fits = pd.DataFrame(params).T
-	print('status Fitted parameters are stored in `fits`:')
-	print(fits)
-	print(('status Instantaneous curvature fields are '
-		'stored in the dict `c0` while average fields are in `c0_avg` '
-		'which can be saved from the terminal'))
+	if 0:
+		print('status Fitted parameters are stored in `fits`:')
+		print(fits)
+		print(('status Instantaneous curvature fields are '
+			'stored in the dict `c0` while average fields are in `c0_avg` '
+			'which can be saved from the terminal'))
 	c0_avg,c0 = [dict([(sn,
 		dat[sn][key])
 		for sn in sns])
@@ -458,6 +492,7 @@ def calculate_undulations_wrapper(sn,**kwargs):
 	midplane_method = kwargs.pop('midplane_method')
 	fit_tension = kwargs.pop('fit_tension')
 	lims = kwargs.pop('lims')
+	bin_size = kwargs.pop('bin_size',None)
 	if kwargs: raise Exception('unprocessed kwargs %s'%kwargs)
 	if midplane_method=='average_normal': 
 		data.set('undulations_average_normal')
@@ -480,7 +515,8 @@ def calculate_undulations_wrapper(sn,**kwargs):
 		(surf.shape[1],surf.shape[2],1)).transpose((2,0,1))
 	uspec = calculate_undulations(surf,vecs,
 		fit_style=fit_style,custom_heights=custom_heights,lims=lims,
-		midplane_method=midplane_method,residual_form=residual_form,fit_tension=fit_tension)
+		midplane_method=midplane_method,residual_form=residual_form,fit_tension=fit_tension,
+		bin_size=bin_size)
 	return uspec
 
 def calculate_entropy(*args,**kwargs):
@@ -955,7 +991,14 @@ if __name__=='__main__':
 	Refactoring NOW.
 	"""
 
-	do_survey_one = True
+	do_survey_one = False
+	# the alternateive residual map for do_survey_one uses imshow
+	do_alt_residual_map = True
+	do_survey_detailed = True
+	do_ultimate_comparison = True
+	if is_custom:
+		work.request_calc = {'curvature_undulation_coupling_dex_1':work.metadata.calculations['curvature_undulation_coupling_dex_1'].get('specs',{}),'curvature_undulation_coupling_dex_2':work.metadata.calculations['curvature_undulation_coupling_dex_2'].get('specs',{})}
+		work.calcs.unroll_loops(work.request_calc)
 
 	if do_survey_one:
 
@@ -966,65 +1009,574 @@ if __name__=='__main__':
 		# assume all is set to a single simulation
 		sns = work.metadata.collections['all']
 		if len(sns)!=1: 
-			raise Exception('the "all" collection must have one simulation')
-		sn = sns[0]
+			print('warning the "all" collection must have one simulation to do the opt survey')
+		else:
 
-		# plot all of the energy spectra
-		tag_this = 'v01'
+			def data_ucc_set(specs):
+				"""Note that adding flags to the design spec causes the select flag in the set 
+				command to fail, hence we have to HACK through it."""
+				#! previously: data_ucc.set(select=design_sweep[tag_this]['specs'])
+				data_ucc.this = data_ucc.data[np.where([specs==j 
+					for i,j in data_ucc.names])[0][0]]
+				data_ucc.this = dict([(sn,data_ucc.this[sn]['data']) for sn in data_ucc.this])
+	
+			sn = sns[0]
+			axes,fig = panelplot(layout={'out':{'grid':[2,1]},
+				'ins':[{'grid':[1,6]},{'grid':[1,len(tags)]}]},
+				figsize=(14,8))
+			axes = {
+				'error':axes[0][0],'kappa':axes[0][1],'sigma':axes[0][2],
+				'undulations':axes[0][4],'spectrum':axes[0][5],'residuals':axes[0][3],
+				'fields':axes[1]}
+			colors = ['#e41a1c','#377eb8','#4daf4a','#984ea3']
+			colors = ['#7fc97f','#beaed4','#fdc086','#ffff99','#386cb0',
+				'#f0027f','#bf5b17','#666666']
+			colors = ['#a6cee3','#1f78b4','#b2df8a','#33a02c','#fb9a99',
+				'#e31a1c','#fdbf6f','#ff7f00','#cab2d6','#6a3d9a','#ffff99','#b15928']
+			colors += colors
+			cmap_name = 'RdBu_r'
+			scatter_size = 4
+			labels = {}
+			for tnum,tag_this in enumerate(tags):
+				selector = design_sweep[tag_this]['specs']
+				data_ucc_set(specs=selector)
+				dat = data_ucc.this
+				result = package_ucc(dat,sns)
+				high_cutoff = design_sweep[tag_this]['specs']['fitting']['high_cutoff']
+				qs,energy = result['qs'][sn],result['energy'][sn]
+				ax = axes['spectrum']
+				opt_method = design_sweep[tag_this]['specs']['design']['optimize_method']
+				samples = design_sweep[tag_this]['specs']['design']['samples']
+				label = '%s: %s,%s'%(tag_this,
+					design_sweep[tag_this]['specs']['design']['optimize_method'],
+					{-1:'all'}.get(samples,'%d'%samples))
+				#! the labels are too busy so we override it
+				label = tag_this
+				labels[tag_this] = label
+				#!!! hack to rescue the qs because they were not saved properly! for v18. did not help
+				#!!! THIS WAS FIXED SO IT CAN BE REMOVED
+				if len(qs)!=len(energy):
+					from calcs.codes.undulate import perfect_collapser
+					perfect_collapser(energy,energy)
+					qs = np.unique(qs)
+					selector = design_sweep['v02']['specs']
+					data_ucc_set(specs=selector)
+					dat = data_ucc.this
+					result = package_ucc(dat,sns)
+					qs2,energy2 = result['qs'][sn],result['energy'][sn]
+					qs = qs2
+				else: qs_prev = qs
+				if selector['design'].get('perfect_collapse_weighted',False):
+					from calcs.codes.undulate import perfect_collapser
+					qs_col,energy_col,inds = perfect_collapser(qs,energy)
+					ax.scatter(qs_col,energy_col,label=label,c=colors[tnum],s=scatter_size,zorder=3)
+				else: ax.scatter(qs,energy,label=label,c=colors[tnum],s=scatter_size,zorder=3)
+				ax.axvline(high_cutoff,c='k')
+				ax.axhline(10**0,c='k')
+				ax.set_xscale('log')
+				ax.set_yscale('log')
+				#! standard residual plot
+				if not do_alt_residual_map:
+					ax = axes['residuals']
+					fitted_inds = np.where(qs<=high_cutoff)
+					x,y = qs,energy-10**0
+					ax.scatter(x[fitted_inds],y[fitted_inds],label=label,
+						c=colors[tnum],s=scatter_size,zorder=3)
+					ax.axhline(0,c='k')
+					#! ax.set_xscale('log')
+			# alternate residual plot
+			if do_alt_residual_map:
+				# collect the number of fitted points for each hypothesis
+				fitted_inds_counts = np.zeros(len(tags))
+				for tnum,tag_this in enumerate(tags):
+					selector = design_sweep[tag_this]['specs']
+					data_ucc_set(specs=selector)
+					dat = data_ucc.this
+					result = package_ucc(dat,sns)
+					high_cutoff = design_sweep[tag_this]['specs']['fitting']['high_cutoff']
+					qs,energy = result['qs'][sn],result['energy'][sn]
+					fitted_inds = np.where(qs<=high_cutoff)[0]
+					fitted_inds_counts[tnum] = len(fitted_inds)
+				#! uses the fitted_inds and qs above
+				residual_map = np.zeros((len(tags),fitted_inds_counts.max().astype(int)))
+				for tnum,tag_this in enumerate(tags):
+					data_ucc_set(specs=design_sweep[tag_this]['specs'])
+					dat = data_ucc.this
+					result = package_ucc(dat,sns)
+					qs,energy = result['qs'][sn],result['energy'][sn]
+					fitted_inds = np.where(qs<=high_cutoff)[0]
+					x,y = qs,np.log10(energy)
+					residual_map[tnum][:len(fitted_inds)] = y[fitted_inds]
+				ax = axes['residuals']
+				max_residual_mag = np.abs(residual_map).max()
+				ax.imshow(residual_map,interpolation='nearest',aspect='auto',
+					cmap=mpl.cm.__dict__[cmap_name],
+					vmax=max_residual_mag,vmin=max_residual_mag*-1)
+			# collect errors
+			errors,kappas,sigmas = [],[],[]
+			for tnum,tag_this in enumerate(tags):
+				data_ucc_set(specs=design_sweep[tag_this]['specs'])
+				dat = data_ucc.this
+				error = data_ucc.this[sn]['bundle'][sn]['fun']
+				errors.append(error)
+				kappas.append(data_ucc.this[sn]['x'][0])
+				do_tension = design_sweep[tag_this]['specs']['design'].get('tension',True)
+				sigmas.append(data_ucc.this[sn]['x'][1] if do_tension else 0.0)
+			# transform errors to errors per mode
+			#!!! check this
+			errors = [np.sqrt(i)/len(dat[sn]['qs']) for i in errors]
+			ax = axes['error']
+			ax.bar(range(len(tags)),errors,color=colors)
+			ax.set_ylabel('error per mode')
+			ax = axes['kappa']
+			ax.bar(range(len(tags)),kappas,color=colors)
+			ax = axes['sigma']
+			ax.bar(range(len(tags)),sigmas,color=colors)
+			legend = axes['spectrum'].legend(bbox_to_anchor=(1.04,1), borderaxespad=0)
+			curvatures = {}
+			for tnum,tag_this in enumerate(tags):
+				data_ucc_set(specs=design_sweep[tag_this]['specs'])
+				dat = data_ucc.this
+				cf = data_ucc.this[sn]['cf']
+				curvatures[tag_this] = cf
+			c0_max = max([np.abs(i).max() for i in curvatures.values()])
+			for tnum,tag_this in enumerate(tags):
+				cf = curvatures[tag_this]
+				ax = axes['fields'][tnum]
+				# if you do not zero-center this, the background color indicates the net curvature
+				#   direction, for example, if it is salmon (red) then the net curvature is more red
+				ax.imshow(cf.T,interpolation='nearest',cmap=mpl.cm.__dict__[cmap_name],
+					vmax=c0_max,vmin=-1*c0_max)
+				ax.set_title(labels.get(tag_this,tag_this))
 
-		axes,fig = panelplot(layout={'out':{'grid':[2,1]},
-			'ins':[{'grid':[1,4]},{'grid':[1,4]}]},figsize=(14,8))
-		axes = {
-			'error':axes[0][0],'spectrum':axes[0][1],'residuals':axes[0][2],
-			'strengths':axes[0][3],'fields':axes[1]}
-		colors = ['#e41a1c','#377eb8','#4daf4a','#984ea3']
-		cmap_name = 'RdBu_r'
-		labels = {}
-		for tnum,tag_this in enumerate(tags):
-			data_ucc.set(select=design_sweep[tag_this]['specs'])
-			dat = data_ucc.this
-			result = package_ucc(dat,sns)
+			sns_this = [sn]
+			low_cutoff = 0.0
+			color_list = colors
 			high_cutoff = design_sweep[tag_this]['specs']['fitting']['high_cutoff']
-			qs,energy = result['qs'][sn],result['energy'][sn]
-			ax = axes['spectrum']
-			ax.scatter(qs,energy,label=tag_this,c=colors[tnum])
-			ax.axvline(high_cutoff,c='k')
-			ax.axhline(10**0,c='k')
+			# plot undulations (repetitive with code from the detailed survey)
+			ax = axes['undulations']
+			fit_style = [
+				'band,perfect,curvefit',
+				'band,perfect,fit',
+				'band,blurry,curvefit',
+				][-1]
+			spec_undulations = dict(fit_style=fit_style,residual_form='log',
+				midplane_method='average_normal',fit_tension=True,lims=(low_cutoff,high_cutoff))
+			spec_undulations['bin_size'] = 0.01
+			uspecs = {}
+			for snum,sn in enumerate(sns_this):
+				uspec = calculate_undulations_wrapper(sn=sn,**spec_undulations)
+				uspecs[sn] = uspec
+				color = color_list[snum]
+				# remove zero
+				q_binned = uspec['q_binned']
+				energy_binned = uspec['energy_binned']
+				inds = q_binned>0
+				x,y = q_binned[inds],energy_binned[inds]
+				uspec['points'] = x,y
+				ax.scatter(x,y,color='k',s=1,zorder=1)
 			ax.set_xscale('log')
 			ax.set_yscale('log')
-			ax = axes['residuals']
-			fitted_inds = np.where(qs<=high_cutoff)
-			x,y = qs,energy-10**0
-			opt_method = design_sweep[tag_this]['specs']['design']['optimize_method']
-			samples = design_sweep[tag_this]['specs']['design']['samples']
-			label = '%s: %s,%s'%(tag_this,
-				design_sweep[tag_this]['specs']['design']['optimize_method'],
-				{-1:'all'}.get(samples,'%d'%samples))
-			labels[tag_this] = label
-			ax.scatter(x[fitted_inds],y[fitted_inds],label=label,c=colors[tnum])
-			ax.axhline(0,c='k')
-		# collect errors
-		errors = []
-		for tnum,tag_this in enumerate(tags):
+			# plot curvature fits on the undulation plot
+			def hqhq(q_raw,kappa,sigma,area,exponent=4.0):
+				return 1.0/(area/2.0*(kappa*q_raw**(exponent)+sigma*q_raw**2))
+			for tnum,tag_this in enumerate(tags):
+				data_ucc_set(specs=design_sweep[tag_this]['specs'])
+				uspec = uspecs[sn]
+				x,y = uspec['points']
+				area = uspec['area']
+				do_tension = design_sweep[tag_this]['specs']['design'].get('tension',True)
+				y = hqhq(q_raw=x,kappa=data_ucc.this[sn]['x'][0],
+					sigma=data_ucc.this[sn]['x'][1] if do_tension else 0.0,
+					area=area)
+				x,y = x[y>0],y[y>0]
+				ax.plot(x,y,linestyle='--',color=color_list[tnum],zorder=tnum,lw=1)
+			if 0: ax.plot(x,hqhq(q_raw=x,kappa=uspec['kappa'],sigma=uspec['sigma'],
+				area=area),linestyle='-',color=color_list[snum])
+			ax.axvline(high_cutoff,c='k')
+			# plot undulation spectra with the no-curvature fit
+			def hqhq(q_raw,kappa,sigma,area,exponent=4.0):
+				return 1.0/(area/2.0*(kappa*q_raw**(exponent)+sigma*q_raw**2))
+			# for this survey, there should only be one simulation anyway
+			for snum,sn in enumerate(sns_this):
+				uspec = uspecs[sn]
+				x,y = uspec['points']
+				area = uspec['area']
+				ax.plot(x,hqhq(q_raw=x,kappa=uspec['kappa'],sigma=uspec['sigma'],
+					area=area),linestyle=':',color='k',alpha=0.35)
+			picturesave('fig.DEV01',work.plotdir,
+				backup=False,version=True,meta={},extras=[legend])
+
+	if do_survey_detailed:
+
+		if do_ultimate_comparison:
+
+			"""
+			transplanting the objective function here to get the error
+			"""
+
+			from calcs.codes.curvature_coupling.curvature_coupling import InvestigateCurvature
+
+			do_vibe = False
+			do_tension = True
+			do_collapse = True
+
+			sn = 'CL160ENS-3'
+			calc = work.metadata.calculations['curvature_undulation_coupling_dex_2']['specs']
+			specs = calc
+			data.set('import_readymade_meso_v1_membrane')
+			undulations_data = data.this
+			data.set('import_readymade_meso_v1_nanogel')
+			protein_data = data.this
+			design = specs['design']['loop']['v24']
+			fitting = specs['fitting']
+			# backfill the right keys because InvestigateCurvature
+			work.meta = work.metadata.meta
+
+			lowcut,hicut = 0.0,0.2
+			do_blurry = False
+			do_collapse = True
+			do_collapse_weighted = False
+			do_positive_tension = False
+
+			signterm = -1.0
+			machine_eps = eps = np.finfo(float).eps
+			ndrops = 0
+			Nfeval = 0
+
+			calcs_dn = os.path.join(os.getcwd(),'calcs')
+			if calcs_dn not in sys.path: sys.path.insert(0,calcs_dn)
+			ic = InvestigateCurvature(sn=sn,work=work,
+				design=design,fitting=fitting,
+				protein_abstractor=protein_data[sn],
+				undulations=undulations_data[sn],
+				do_calculation=False)
+			hqs = ic.memory[(sn,'hqs')]
+			vecs = ic.memory[(sn,'vecs')]
+			# formulate the wavevectors
+			lenscale = 1.0
+			m,n = mn = np.shape(hqs)[1:]
+			Lx,Ly = np.mean(vecs,axis=0)[:2]
+			q2d = lenscale*np.array([[np.sqrt(
+				((i-m*(i>m/2))/((Lx)/1.)*2*np.pi)**2+
+				((j-n*(j>n/2))/((Ly)/1.)*2*np.pi)**2)
+				for j in range(0,n)] for i in range(0,m)])
+			q_raw = q_raw_expl = np.reshape(q2d,-1)[1:]
+			area = (Lx*Ly/lenscale**2)
+			if do_collapse:
+				from codes.undulate import perfect_collapser
+				x = q_raw
+				x_red,_,reduce_inds = perfect_collapser(x,x)
+				reduce_inds_lazy = [np.where(reduce_inds==i) for i in np.unique(reduce_inds)]
+				# override the band forthe new points
+				# choosing greater than lowcut to exclude the zero mode
+				band = np.where(np.all((x_red>lowcut,x_red<hicut),axis=0))
+
+			dotplace = lambda n : re.compile(r'(\d)0+$').sub(r'\1',"%3.5f"%float(n)).rjust(8)
+			def residual(values): 
+				return np.sum(np.log10(values.clip(min=machine_eps))**2)/float(len(values))
+			residual_local = residual
+
+			def callback(args):
+				"""Watch the optimization."""
+				global Nfeval
+				name_groups = ['kappa',]+(['gamma'] if do_tension else [])+(
+					['vibe'] if do_vibe else [])+['curve(%d)'%i for i in range(ndrops)]
+				text = ' step = %d '%Nfeval+' '.join([name+' = '+dotplace(val)
+					for name,val in list(zip(name_groups,args))+[('error',objective(args))]])
+				status('searching! '+text,tag='optimize')
+				Nfeval += 1
+
+			def multipliers(x,y): 
+				"""Multiplying complex matrices in the list of terms that contribute to the energy."""
+				return x*np.conjugate(y)
+
+			def objective(args,mode='residual'):
+				"""
+				Fit parameters are defined in sequence for the optimizer.
+				They are: kappa,gamma,vibe,*curvatures-per-dimple.
+				"""
+				if do_vibe and do_tension:
+					(kappa,gamma,vibe),curvatures = args[:3],args[3:]
+				elif do_vibe and not do_tension:
+					(kappa,vibe),curvatures = args[:2],args[2:]
+				elif not do_vibe and do_tension:
+					(kappa,gamma),curvatures = args[:2],args[2:]
+				elif not do_vibe and not do_tension:
+					(kappa,),curvatures = args[:1],args[1:]
+				else: raise Exception('unclear request')
+				if not do_tension: gamma = 0.0
+				#! composite = self.curvature_sum(cfs,curvatures,method=curvature_sum_method)
+				#! cqs = cctools.fft_field(composite)
+				termlist = [multipliers(x,y) for x,y in [(hqs,hqs),]]
+				termlist = [np.reshape(np.mean(k,axis=0),-1)[1:] for k in termlist]
+				# skipping assertion and dropping imaginary
+				termlist = [np.real(k) for k in termlist]
+				# reduce the termlist if we are doing any binning
+				if do_blurry or (do_collapse and not do_collapse_weighted):
+					termlist = [np.array([termlist[i][r].mean() 
+						for r in reduce_inds_lazy]) for i in range(len(termlist))]
+					q_raw = x_red
+				# if you refer to q_raw in a conditional below and it exists in the parent
+				#   scope as well, then whenever you skip the conditional, it will not be defined
+				#   because python knows it is a local and hence ignores the parent scope. it is
+				#   best to be very careful with scope
+				else: q_raw = q_raw_expl
+				if do_positive_tension: gamma = np.abs(gamma)
+				if 0: hel = (kappa/2.0*area*(termlist[0]*q_raw**4+signterm*termlist[1]*q_raw**2
+					+signterm*termlist[2]*q_raw**2+termlist[3])
+					+gamma*area*(termlist[0]*q_raw**2))
+				hel = (kappa/2.0*area*(termlist[0]*q_raw**4)+gamma*area*(termlist[0]*q_raw**2))
+				if do_vibe:
+					ratio = hel/((vibe*q_raw+machine_eps)/(np.exp(vibe*q_raw)-1)+machine_eps)
+				else: ratio = hel
+				if mode=='residual': return residual_local(ratio[band])
+				elif mode=='ratio': return ratio
+				else: raise Exception('invalid mode %s'%mode)
+
+			args = data_ucc.this[sn]['x'][0],data_ucc.this[sn]['x'][1]
+			error_alt = objective(args)
+			error_real = data_ucc.this[sn]['bundle'][sn]['fun']
+			method_opt = ic.design.get('optimize_method','BFGS')
+			# select an optimization method
+			methods_opt = dict([
+				('SLSQP',{'maxiter':1000}),
+				('BFGS',{})])
+			method_args = methods_opt[method_opt]
+			fit = scipy.optimize.minimize(objective,
+				x0=tuple(args),method=method_opt,
+				callback=callback,options=method_args)
+
+		groups = {
+			'Rigid':('RigidNCE1','RigidNCE2','RigidNCE3'),
+			'Rigid-Tethered':('SemiRigidE1_50','SemiRigidE2_50','SemiRigidE3_50'),
+			'Flexible':('CL160ENS-1','CL160ENS-2','CL160ENS-3',),}
+		groups_order = ['Rigid','Rigid-Tethered','Flexible']
+		colors = ['#e41a1c','#377eb8','#4daf4a']
+		color_list = color_vary(colors=colors,n=3,p=0.2)
+
+		def dextran_bar(ax,data,color_list,
+			groups_order,sci_y=False,negatives=False,do_legend=True,
+			legend_loc='upper right',bbox_legend=False):
+			"""
+			Stylized plot for the dextran manuscript.
+			"""
+			df = pd.DataFrame(data)
+			plot = df.plot.bar(ax=ax,edgecolor='black',stacked=False)
+			if negatives:
+				df_below = pd.DataFrame(negatives)
+				df.plot.bar(ax=ax)
+			#! notes on "replicate-grouped bars": we have to set the bars manually
+			#!   because pandas expects each member of a group to be the same color
+			#!   for example repeats of sets of three colors for each of three different
+			#!   slices of the original dataframe. this is not useful for replicates
+			bars = [this for this in plot.get_children()
+				if this.__class__.__name__=='Rectangle' and this._width<1]
+			if len(color_list)<len(bars):
+				raise Exception('we have %d bars and only %d colors'%(len(bars),len(color_list)))
+			for bnum,bar in enumerate(bars):
+				bar.set_facecolor(color_list[bnum])
+			ax.get_legend().remove()
+			ax.set_xticklabels(groups_order,rotation=0)
+			if sci_y:
+				plt.ticklabel_format(style='sci',axis='y',scilimits=(0,3))
+			ax.tick_params(axis='x',which='both',bottom=False)
+			# custom legend for replicates by group
+			if do_legend:
+				n_reps = list(set([len(i) for i in data]))
+				if len(n_reps)!=1: raise Exception('non-uniform number of replicates')
+				else: n_reps = n_reps[0]
+				labels = ['%s'%i for i in groups_order]
+				reorder = [j*n_reps+i for i in range(n_reps) 
+					for j in range(len(colors))]
+				color_list = [color_list[i] for i in reorder]
+				# create proxy artists as handles:
+				cmap_handles = [Rectangle((0, 0), 1, 1) for _ in labels]
+				handler_map = dict(zip(cmap_handles,
+					[HandlerColormap(custom_colors=color_list[ii*n_reps:(ii+1)*n_reps]) 
+					for ii,i in enumerate(labels)]))
+				legend_args = dict(loc=legend_loc)
+				if bbox_legend: legend_args['bbox_to_anchor'] = bbox_legend
+				legend = ax.legend(handles=cmap_handles, 
+					labels=labels, 
+					handler_map=handler_map,
+					**legend_args)
+				frame = legend.get_frame()
+				legend.set_title('replicates')
+				frame.set_edgecolor('white')
+				frame.set_facecolor('white')
+				return legend
+
+		cmap_name = 'RdBu_r'
+
+		# select the design
+		"""
+		note on loops:
+			...!!!
+		"""
+		if 0:
+			#!!!! did we ever test v07 !!!??? or is this the first time?
+			tag_this = 'v02'
 			data_ucc.set(select=design_sweep[tag_this]['specs'])
-			error = data_ucc.this[sn]['bundle'][sn]['fun']
-			errors.append(error)
-		ax = axes['error']
-		ax.bar(range(len(tags)),errors,color=colors)
-		legend = axes['residuals'].legend(bbox_to_anchor=(1.04,1), borderaxespad=0)
+			high_cutoff = design_sweep[tag_this]['specs']['fitting']['high_cutoff']
+			low_cutoff = 0.0
+
+			tag_this = 'v21'
+			data_ucc.set(select=design_sweep[tag_this]['specs'])
+			high_cutoff = design_sweep[tag_this]['specs']['fitting']['high_cutoff']
+			low_cutoff = 0.0
+			data_ucc_fold = this = work.plotload(calcname+'_fold')
+
+		sns_this = [i for j in groups.values() for i in j]
+		nrows_grid = ncols_grid = int(np.ceil(np.sqrt(len(sns_this))))
+		axes,fig = panelplot(layout={'out':{'grid':[2,3],
+			'hspace':0.2,'wspace':0.2},
+			'ins':[
+				{'grid':[nrows_grid,ncols_grid],'hspace':0.5,'wspace':0.5},
+				{'grid':[2,2],'hspace':0.5,'wspace':0.5},{'grid':[0,0]},
+				{'grid':[nrows_grid,ncols_grid],'hspace':0.5,'wspace':0.5},
+				{'grid':[1,1]},{'grid':[1,1]},]},
+			figsize=(20,14))
+		axes = {
+			'kappa':axes[1][0],'gamma':axes[1][1],
+			'error':axes[1][2],'strengths':axes[1][3],
+			'fields':axes[0],'z':axes[3],'energy':axes[4][0],
+			'undulations':axes[5][0]}
+		for a in range(nrows_grid*ncols_grid-1,len(sns)-1,-1):
+			fig.delaxes(axes['fields'][a])
+
+		def get_kappa(sn):
+			return data_ucc.this[sn]['x'][0]
+		def get_gamma(sn):
+			return data_ucc.this[sn]['x'][1]
+		def get_error(sn):
+			return data_ucc.this[sn]['bundle'][sn]['fun']
+		def get_c0_max(sn):
+			return data_ucc.this[sn]['cf'].max()
+		def get_c0_min(sn):
+			return data_ucc.this[sn]['cf'].min()
+
+		# bar plots of relevant readouts
+		extras = []
+		for key in ['kappa','gamma','error']:
+			ax = axes[key]
+			ax.set_title({'kappa':'bending rigidity','gamma':'tension','error':'error'}[key])
+			ax.set_ylabel({
+				'kappa':r'$\mathrm{\kappa\,(k_B T)}$',
+				'gamma':r'$\mathrm{\sigma\,(k_B T {nm}^{-2})}$','error':'MSE'}[key])
+			this = [[globals()['get_%s'%key](sn) 
+				for sn in groups[g]] for g in groups_order]
+			if key=='gamma':
+				kwargs['bbox_legend'] = (1.0,0.0,1.,1.)
+				kwargs['legend_loc'] = 'upper left'
+				kwargs['do_legend'] = True
+			else: kwargs = {'do_legend':False}
+			out = dextran_bar(ax=ax,data=this,
+				color_list=color_list,groups_order=groups_order,**kwargs)
+			if out: extras.append(out)
+
+		# plot C_0 histograms
+		sb.violinplot(data=[data_ucc.this[sn]['cf'].reshape(-1) 
+			for sn in sns_this],ax=axes['strengths'])
+		ax = axes['strengths']
+		ax.set_ylabel(r'$C_0\,(nm)$')
+		ax.set_title('curvature')
+
+		# plot curvature fields
 		curvatures = {}
-		for tnum,tag_this in enumerate(tags):
-			data_ucc.set(select=design_sweep[tag_this]['specs'])
+		for snum,sn in enumerate(sns_this):
 			cf = data_ucc.this[sn]['cf']
-			curvatures[tag_this] = cf
+			curvatures[sn] = cf
 		c0_max = max([np.abs(i).max() for i in curvatures.values()])
-		for tnum,tag_this in enumerate(tags):
-			cf = curvatures[tag_this]
-			ax = axes['fields'][tnum]
-			# if you do not zero-center this, the background color indicates the net curvature
-			#   direction, for example, if it is salmon (red) then the net curvature is more red
+		for snum,sn in enumerate(sns_this):
+			cf = curvatures[sn]
+			ax = axes['fields'][snum]
 			ax.imshow(cf.T,interpolation='nearest',cmap=mpl.cm.__dict__[cmap_name],
 				vmax=c0_max,vmin=-1*c0_max)
-			ax.set_title(labels[tag_this])
-		picturesave('fig.DEV01',work.plotdir,
-			backup=False,version=True,meta={},extras=[legend])
+			ax.set_title(sn)
+			ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=True)
+			ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
+
+		# plot mean surfaces
+		z_surfaces = {}
+		for snum,sn in enumerate(sns_this):
+			data.set('import_readymade_meso_v1_membrane')
+			mesh = data.this[sn]['mesh']
+			surf = np.mean(mesh,axis=0).mean(axis=0)
+			surf -= surf.mean()
+			z_surfaces[sn] = surf
+		z_max = max([np.abs(i).max() for i in z_surfaces.values()])
+		for snum,sn in enumerate(sns_this):
+			ax = axes['z'][snum]
+			surf = z_surfaces[sn]
+			ax.imshow(surf.T,interpolation='nearest',cmap=mpl.cm.__dict__[cmap_name],
+				vmax=z_max,vmin=-1*z_max)
+			ax.set_title(sn)
+			ax.tick_params(axis='x',which='both',bottom=False,top=False,labelbottom=True)
+			ax.tick_params(axis='y',which='both',left=False,right=False,labelleft=True)
+
+		# plot energy spectra
+		ax = axes['energy']
+		ax.set_title('energy spectra')
+		#ax.set_ylabel(r'$\mathrm{\mathcal{H_{el}}}$')
+		#ax.set_xlabel(r'$\mathrm{\vec{q}}$')
+		for snum,sn in enumerate(sns_this):
+			qs = data_ucc.this[sn]['qs']
+			energy = data_ucc.this[sn]['ratios']
+			ax.scatter(qs,energy,color=color_list[snum])
+		ax.set_xscale('log')
+		ax.set_yscale('log')
+		ax.axhline(10**0,c='k')
+		#!!! hardcoded because we have mangled the data to fit it in this script
+		if is_custom: 
+			high_cutoff,low_cutoff = 0.2,0.0
+		else: #! added this for pixel ...!!!
+			high_cutoff,low_cutoff = 0.2,0.0
+		ax.axvline(high_cutoff,c='k')
+
+		#! sns_this = sns_this[:1]
+		# plot undulations
+		zero_limit = 10**-5 # enforce no tension-drop below zero
+		ax = axes['undulations']
+		ax.set_xlabel(r'$\mathrm{\vec{q}}$')
+		#ax.set_ylabel(r'$\mathrm{ \langle h_{\vec{q}} h_{\vec{q^{\prime}}} \rangle}$')
+		ax.set_title('undulations')
+		fit_style = [
+			'band,perfect,curvefit',
+			'band,perfect,fit',
+			'band,blurry,curvefit',
+			][-1]
+		spec_undulations = dict(fit_style=fit_style,residual_form='log',
+			midplane_method='average_normal',fit_tension=True,lims=(low_cutoff,high_cutoff))
+		spec_undulations['bin_size'] = 0.01
+		uspecs = {}
+		for snum,sn in enumerate(sns_this):
+			uspec = calculate_undulations_wrapper(sn=sn,**spec_undulations)
+			uspecs[sn] = uspec
+			color = color_list[snum]
+			# remove zero
+			q_binned = uspec['q_binned']
+			energy_binned = uspec['energy_binned']
+			inds = q_binned>0
+			x,y = q_binned[inds],energy_binned[inds]
+			uspec['points'] = x,y
+			ax.scatter(x,y,color=color)
+		ax.set_xscale('log')
+		ax.set_yscale('log')
+		# plot fits
+		def hqhq(q_raw,kappa,sigma,area,exponent=4.0):
+			return 1.0/(area/2.0*(kappa*q_raw**(exponent)+sigma*q_raw**2))
+		for snum,sn in enumerate(sns_this):
+			uspec = uspecs[sn]
+			x,y = uspec['points']
+			area = uspec['area']
+			y_this = hqhq(q_raw=x,kappa=get_kappa(sn),sigma=get_gamma(sn),
+				area=area)
+			inds = y_this>zero_limit
+			ax.plot(x[inds],y_this[inds],linestyle='--',color=color_list[snum])
+			ax.plot(x,hqhq(q_raw=x,kappa=uspec['kappa'],sigma=uspec['sigma'],
+				area=area),linestyle='-',color=color_list[snum])
+		ax.axvline(high_cutoff,c='k')
+
+		picturesave('fig.DEV02',work.plotdir,
+			backup=False,version=True,meta={},extras=extras)

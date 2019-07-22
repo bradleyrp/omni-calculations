@@ -274,19 +274,36 @@ class InvestigateCurvature:
 				#! self.nframes = len(points_all)
 				self.nframes = len(vecs)
 				points = np.zeros((len(ref_grid),self.nframes,2))
+				angles = []
 				for fr in range(self.nframes):
 					pts = points_all[fr].mean(axis=0)[:,:2]
 					offset = pts.mean(axis=0)
 					average_axis = principal_axis(pts-offset)
 					angle = np.arccos(np.dot(vecnorm(average_axis),[1.0,0.0]))
+					angles.append(angle)
 					direction = 1.0-2.0*(np.cross(vecnorm(average_axis),[1.0,0.0])<0)
 					ref_grid_rot = rotate2d(ref_grid,direction*angle)+offset
 					# handle PBCs by putting everything back in the box
-					try: ref_grid_rot_in_box = (ref_grid_rot + 
+					ref_grid_rot_in_box = (ref_grid_rot + 
 						(ref_grid_rot<0)*vecs[fr,:2] - (ref_grid_rot>=vecs[fr,:2])*vecs[fr,:2])
-					except:
-						import ipdb;ipdb.set_trace()
 					points[:,fr] = ref_grid_rot_in_box
+				if self.design.get('ignore_rotation',False):
+					# if we ignore rotation, then we take the average angle and rotate a random
+					#   snapshot of the points to that angle and use that for each frame
+					#   weuset the last set of points from the loop above
+					angle_average = np.mean(angles)
+					angle = angle_average
+					# the following is repetitive with the for loop above			
+					# for v21 I made the angle flexible
+					#! set the rotation angle to zero for an isotropic field
+					#!   otherwise it uses the average angle above
+					if isinstance(self.design.get('rotation_angle',False),float):
+						angle = self.design['rotation_angle']
+					direction = 1.0-2.0*(np.cross(vecnorm(average_axis),[1.0,0.0])<0)
+					ref_grid_rot = rotate2d(ref_grid,direction*angle)+offset
+					ref_grid_rot_in_box = (ref_grid_rot + 
+						(ref_grid_rot<0)*vecs[fr,:2] - (ref_grid_rot>=vecs[fr,:2])*vecs[fr,:2])
+					for fr in range(self.nframes): points[:,fr] = ref_grid_rot_in_box
 				# debug with a plot if desired
 				if False:
 					import matplotlib.pyplot as plt
@@ -371,6 +388,10 @@ class InvestigateCurvature:
 		spec = self.design
 		extents = spec.get('extents',{})
 		extents_method = extents.get('method')
+		do_vibe = spec.get('vibe',True)
+		do_tension = spec.get('tension',True)
+		bin_width = spec.get('bin_width',False)
+		do_positive_tension = spec.get('positive_tension',False)
 		curvature_sum_method = self.design['curvature_sum']
 		# special handling for pixel extents if None: extent is half the spacer
 		#! should this check if the curvature position method is pixel?
@@ -403,22 +424,102 @@ class InvestigateCurvature:
 				((i-m*(i>m/2))/((Lx)/1.)*2*np.pi)**2+
 				((j-n*(j>n/2))/((Ly)/1.)*2*np.pi)**2)
 				for j in range(0,n)] for i in range(0,m)])
-			q_raw = np.reshape(q2d,-1)[1:]
+			q_raw = q_raw_expl = np.reshape(q2d,-1)[1:]
 			area = (Lx*Ly/lenscale**2)
 
 			tweak = self.fitting_parameters
 			signterm = tweak.get('inner_sign',-1.0)
 			initial_kappa = tweak.get('initial_kappa',25.0)
+			initial_sigma = tweak.get('initial_sigma',0.0)
+			initial_fit = spec.get('initial_fit',False)
 			lowcut = kwargs.get('lowcut',tweak.get('low_cutoff',0.0))
-			band = cctools.filter_wavevectors(q_raw,low=lowcut,high=tweak.get('high_cutoff',1.0))
+			hicut = tweak.get('high_cutoff',1.0)
+			band = cctools.filter_wavevectors(q_raw,low=lowcut,high=hicut)
+			bin_size = spec.get('bin_width',False)
+			do_blurry = isinstance(bin_size,float)
+			do_collapse = spec.get('perfect_collapse',False)
+			do_collapse_weighted = spec.get('perfect_collapse_weighted',False)
+			if do_collapse_weighted and not do_collapse:
+				raise Exception('cannot select perfect_collapse_weighted without perfect_collapse')
+			
+			if initial_fit:
+				from codes.undulate import calculate_undulations
+				# canonical fit style
+				fit_style = 'band,perfect,curvefit' if not do_blurry else 'band,blurry,curvefit'
+				#! this method requires the midplane in the memory
+				midplane_method = spec.get('midplane_method','flat')
+				surf = self.memory[(sn,'midplane')]
+				custom_heights = None
+				if midplane_method=='flat' or midplane_method==None:
+					surf = surf-np.mean(surf)
+				elif midplane_method=='average':
+					surf = surf-np.mean(surf,axis=0)
+				elif midplane_method=='average_normal' and type(custom_heights)==type(None):
+					raise Exception('send custom_heights for average_normal')
+				uspec = calculate_undulations(surf,vecs,fit_style=fit_style,custom_heights=custom_heights,lims=(lowcut,hicut),midplane_method=midplane_method,residual_form='log',fit_tension=True,bin_size=bin_size)
+				initial_kappa = uspec['kappa']
+				initial_sigma = uspec['sigma']
+
+			# define this here or it is not accessible in the objective function
+			collapse_weights = None
+			#! develop the perfect binner
+			if do_blurry and do_collapse:
+				raise Exception('nonzero bin size and perfect_collapse are incompatible')
+			if do_blurry:
+				from codes.undulate import blurry_binner
+				x = q_raw
+				x_red,_,reduce_inds = blurry_binner(x,x,bin_width=bin_size)
+				reduce_inds_lazy = [np.where(reduce_inds==i) for i in np.unique(reduce_inds)]
+				# override the band forthe new points
+				# choosing greater than lowcut to exclude the zero mode
+				band = np.where(np.all((x_red>lowcut,x_red<hicut),axis=0))
+				#! simulating termlist for development because of scope issues
+				if False:
+					def multipliers(x,y): return x*np.conjugate(y)
+					curvatures = [0.0 for i in range(ndrops)]
+					composite = self.curvature_sum(cfs,curvatures,method=curvature_sum_method)
+					cqs = cctools.fft_field(composite)
+					termlist = [multipliers(x,y) for x,y in [(hqs,hqs),(hqs,cqs),(cqs,hqs),(cqs,cqs)]]
+					termlist = [np.reshape(np.mean(k,axis=0),-1)[1:] for k in termlist]
+					# skipping assertion and dropping imaginary
+					termlist = [np.real(k) for k in termlist]
+					#! doing this the lazy way? ...!!!
+					#! moved this below for now
+					reduce_inds_lazy = [np.where(reduce_inds==i) for i in np.unique(reduce_inds)]
+					reduced = [[termlist[i][r].mean() for r in reduce_inds_lazy] for i in range(4)]
+			elif do_collapse:
+				from codes.undulate import perfect_collapser
+				x = q_raw
+				x_red,_,reduce_inds = perfect_collapser(x,x)
+				reduce_inds_lazy = [np.where(reduce_inds==i) for i in np.unique(reduce_inds)]
+				# override the band forthe new points
+				# choosing greater than lowcut to exclude the zero mode
+				band = np.where(np.all((x_red>lowcut,x_red<hicut),axis=0))
+				if do_collapse_weighted:
+					# get the number of wavevectors that collapse to each point
+					"""
+					some of these were 12 and I am not sure why!
+					look for indices where the weight is 12
+						indices[np.where(collapse_weights==12)[0]] 
+					ironically 12 is one of those indices
+						q_raw[np.where(np.abs(q_raw-x_red[12])<10**-3)]
+					"""
+					counts,indices = np.histogram(reduce_inds,np.arange(reduce_inds.max()-1))
+					collapse_weights = 1./counts[band[0]]
 			residual_form = kwargs.get('residual_form',tweak.get('residual_form','log'))
 			if residual_form == 'log':
 				def residual(values): 
 					return np.sum(np.log10(values.clip(min=machine_eps))**2)/float(len(values))
+				def residual_weights(values):
+					return np.sum((collapse_weights*(
+						np.log10(values.clip(min=machine_eps))))**2)/float(len(values))
 			elif residual_form == 'linear': 
 				def residual(values): 
 					return np.sum((values-1.0)**2)/float(len(values))
 			else: raise Exception('unclear residual form %s'%residual_form)
+			# set the residual function for the weighted method
+			if do_collapse_weighted: residual_local = residual_weights
+			else: residual_local = residual
 
 			def multipliers(x,y): 
 				"""Multiplying complex matrices in the list of terms that contribute to the energy."""
@@ -427,7 +528,8 @@ class InvestigateCurvature:
 			def callback(args):
 				"""Watch the optimization."""
 				global Nfeval
-				name_groups = ['kappa','gamma','vibe']+['curve(%d)'%i for i in range(ndrops)]
+				name_groups = ['kappa',]+(['gamma'] if do_tension else [])+(
+					['vibe'] if do_vibe else [])+['curve(%d)'%i for i in range(ndrops)]
 				text = ' step = %d '%Nfeval+' '.join([name+' = '+dotplace(val)
 					for name,val in list(zip(name_groups,args))+[('error',objective(args))]])
 				status('searching! '+text,tag='optimize')
@@ -438,24 +540,46 @@ class InvestigateCurvature:
 				Fit parameters are defined in sequence for the optimizer.
 				They are: kappa,gamma,vibe,*curvatures-per-dimple.
 				"""
-				kappa,gamma,vibe = args[:3]
-				curvatures = args[3:]
+				if do_vibe and do_tension:
+					(kappa,gamma,vibe),curvatures = args[:3],args[3:]
+				elif do_vibe and not do_tension:
+					(kappa,vibe),curvatures = args[:2],args[2:]
+				elif not do_vibe and do_tension:
+					(kappa,gamma),curvatures = args[:2],args[2:]
+				elif not do_vibe and not do_tension:
+					(kappa,),curvatures = args[:1],args[1:]
+				else: raise Exception('unclear request')
+				if not do_tension: gamma = 0.0
 				composite = self.curvature_sum(cfs,curvatures,method=curvature_sum_method)
 				cqs = cctools.fft_field(composite)
 				termlist = [multipliers(x,y) for x,y in [(hqs,hqs),(hqs,cqs),(cqs,hqs),(cqs,cqs)]]
 				termlist = [np.reshape(np.mean(k,axis=0),-1)[1:] for k in termlist]
 				# skipping assertion and dropping imaginary
 				termlist = [np.real(k) for k in termlist]
+				# reduce the termlist if we are doing any binning
+				if do_blurry or (do_collapse and not do_collapse_weighted):
+					termlist = [np.array([termlist[i][r].mean() 
+						for r in reduce_inds_lazy]) for i in range(4)]
+					q_raw = x_red
+				# if you refer to q_raw in a conditional below and it exists in the parent
+				#   scope as well, then whenever you skip the conditional, it will not be defined
+				#   because python knows it is a local and hence ignores the parent scope. it is
+				#   best to be very careful with scope
+				else: q_raw = q_raw_expl
+				if do_positive_tension: gamma = np.abs(gamma)
 				hel = (kappa/2.0*area*(termlist[0]*q_raw**4+signterm*termlist[1]*q_raw**2
 					+signterm*termlist[2]*q_raw**2+termlist[3])
 					+gamma*area*(termlist[0]*q_raw**2))
-				ratio = hel/((vibe*q_raw+machine_eps)/(np.exp(vibe*q_raw)-1)+machine_eps)
-				if mode=='residual': return residual(ratio[band])
+				if do_vibe:
+					ratio = hel/((vibe*q_raw+machine_eps)/(np.exp(vibe*q_raw)-1)+machine_eps)
+				else: ratio = hel
+				if mode=='residual': return residual_local(ratio[band])
 				elif mode=='ratio': return ratio
 				else: raise Exception('invalid mode %s'%mode)
 
 			Nfeval = 0
-			initial_conditions = [initial_kappa,0.0,0.01]+[0.0 for i in range(ndrops)]
+			initial_conditions = [initial_kappa]+([initial_sigma] if do_tension else [])+(
+				[0.01] if do_vibe else [])+[0.0 for i in range(ndrops)]
 			test_ans = objective(initial_conditions)
 			if not isinstance(test_ans,np.floating): 
 				raise Exception('objective_residual function must return a scalar')
@@ -492,7 +616,10 @@ class InvestigateCurvature:
 					solutions['drop_gaussians_points'] = self.memory[(sn,'drop_gaussians_points')]
 				else: raise Exception('invalid extents_method %s'%extents_method)
 				solutions['ratios'] = objective(fit.x,mode='ratio')
-				solutions['qs'] = q_raw
+				solutions['qs'] = (x_red 
+					if do_blurry or 
+					(do_collapse and not do_collapse_weighted) 
+					else q_raw)
 			except:
 				print('error failure during optimization and here is a handy terminal')
 				import ipdb;ipdb.set_trace()
