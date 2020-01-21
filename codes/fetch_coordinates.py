@@ -79,7 +79,7 @@ class PredefinedSelectionMDA:
 		"""MDAnalysis selection for protein with no hydrogens."""
 		return "protein and not name H*"
 
-def fetch_coordinates_subject_target(**kwargs):
+def fetch_coordinates_via_metadata(**kwargs):
 	"""
 	Hook for getting coordinates of a subject and object specified 
 	in the calc specs.
@@ -92,6 +92,7 @@ def fetch_coordinates_subject_target(**kwargs):
 	subject = kwargs_compute.get('calc',{}).get('specs',{}).get('subject',None)
 	obj = kwargs_compute.get('calc',{}).get('specs',{}).get('target',None)
 	if not subject or not obj:
+		import ipdb;ipdb.set_trace()
 		raise Exception('subject or target is empty: %s, %s'%(subject,obj))
 	selections = {'subject':subject,'target':obj}
 	# special selections here
@@ -102,6 +103,29 @@ def fetch_coordinates_subject_target(**kwargs):
 	mc = MultiCoordinates(
 		structure=structure,trajectory=trajectory,
 		**selections)
-	try: return mc.load()
-	except:
-		import ipdb;ipdb.set_trace()
+	return mc.load()
+
+#! the above works in contacts.py and uses the metadata from kwargs_compute
+#! the below works more generally
+
+def fetch_coordinates_subject_target(**kwargs):
+	"""
+	Hook for getting coordinates of a subject and object specified 
+	in the calc specs.
+	"""
+	kwargs_this = kwargs['kwargs'] #! obviously foolish; needs fixed
+	structure = kwargs_this.get('structure',None)
+	trajectory = kwargs_this.get('trajectory',None)
+	subject = kwargs_this.get('subject',None)
+	obj = kwargs_this.get('object',None)
+	selections = {'subject':subject,'target':obj}
+	# special selections here
+	#! special selections is repetitive with fetch_coordinates_subject_target
+	for key,this in selections.items():
+		if isinstance(this,dict) and set(this.keys())=={'predefined'}:
+			selections[key] = PredefinedSelectionMDA(
+				this['predefined'],work=kwargs_this['workspace']).result
+	mc = MultiCoordinates(
+		structure=structure,trajectory=trajectory,
+		**selections)
+	return mc.load()

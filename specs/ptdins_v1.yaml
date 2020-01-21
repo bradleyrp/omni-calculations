@@ -1,0 +1,84 @@
+calculations:
+  lipid_abstractor:
+    uptype: simulation
+    slice_name: current
+    group: all
+    collections: cursor
+    specs:
+      selector:
+        loop:
+          lipid_com:
+            monolayer_cutoff: 1.85
+            resnames: +selectors/resnames_lipid
+            type: com
+            separator:
+              cluster: True 
+              cluster_neighbors: 3
+              topologize_tolerance: 0.1
+              lipid_tip: "(not resname CHL1 and name P)"
+          lipid_chol_com:
+            monolayer_cutoff: 1.4
+            resnames: +selectors/resnames_lipid_chol
+            type: com
+            separator:
+              cluster: True 
+              cluster_neighbors: 3
+              topologize_tolerance: 0.1
+              lipid_tip: "(not resname CHL1 and name P) or (resname CHL1 and name H3')"
+          lipid_chol_com_headless:
+            monolayer_cutoff: 0.8
+            resnames: +selectors/resnames_lipid_chol
+            # custom code in python must create the MDAnalysis-compatible "selstring" text
+            type: custom
+            custom: |
+              sel_all = uni.select_atoms('all')
+              sel_lipids = ' or '.join(['resname %s'%i for i in selector['resnames']])
+              sel_tail_names = ' or '.join(['name %s'%j for j in [
+                i for i in np.unique(sel_all.names) if re.match('^C(2|3)\d{2,}',i)]])
+              selstring = '(not name H*) and ((%s) or ((%s) and (%s)))'%(
+                'resname CHL1',sel_lipids,sel_tail_names)
+            selection: +selectors/headless_selection
+            separator:
+              cluster: True 
+              cluster_neighbors: 3
+              topologize_tolerance: 0.1
+              lipid_tip: "(not resname CHL1 and name P) or (resname CHL1 and name H3')"
+  lipid_mesh:
+    uptype: post
+    slice_name: current
+    collections: cursor
+    specs:
+      upstream:
+        lipid_abstractor:
+          selector:
+            loop:
+              - lipid_com
+              #- lipid_chol_com
+              #- lipid_chol_com_headless
+  ptdins_bond_graphs_calc:
+    uptype: post
+    slice_name: current
+    collections: cursor
+    specs:
+      upstream:
+        lipid_mesh:
+          upstream: 
+            lipid_abstractor:
+              selector: lipid_com        
+        lipid_abstractor:
+          selector: lipid_com
+plots:
+  ptdins_percolate: 
+    script: ptdins_bond_graphs.py
+    collections: cursor
+    plotload_version: 2
+    autoplot: True
+    calculation: 
+      lipid_abstractor:
+        selector: lipid_com
+      lipid_mesh:
+        upstream: 
+          lipid_abstractor:
+            selector: lipid_com
+      # this shit is broke so using data2 = work.plotload(plotname='ptdins_bond_graphs_calc')
+      ptdins_bond_graphs_calc: {}
